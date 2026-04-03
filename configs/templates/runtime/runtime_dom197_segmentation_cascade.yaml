@@ -1,0 +1,82 @@
+experiment_name: forest_agent_dev
+run_name: dom197_segmentation_cascade
+
+compartment_id: dom197_demo
+patch_id: dom197_full
+forest_type: dense_mixed
+agent_version: v1
+
+conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+conda_env: tcd
+work_dir: /home/xth/tcd/test_prediction
+
+input_image: /mnt/f/forest_agent_project/input/JX_ShanXia/DOM/dom197.TIF
+output_dir: /home/xth/forest_agent_project/outputs/dom197_segmentation_cascade
+
+metrics_json: /home/xth/forest_agent_project/outputs/dom197_segmentation_cascade/metrics.json
+details_csv: /home/xth/forest_agent_project/outputs/dom197_segmentation_cascade/details.csv
+
+xiaoban_shp: /mnt/f/forest_agent_project/input/JX_ShanXia/SHP/xiaoban29pro.shp
+xiaoban_id_field: "XBH"
+tree_count_field: "LMSL"
+crown_field: "PJGF"
+closure_field: "YBD"
+area_ha_field: "MJ_hm2"
+
+flat_slope_threshold_deg: 5.0
+plain_relief_threshold_m: 30.0
+
+terrain_landform_field: landform_type
+terrain_slope_class_field: slope_class
+terrain_aspect_class_field: aspect_class
+terrain_slope_position_field: slope_position_class
+
+semantic_prior_script: /home/xth/forest_agent_project/runtime_entrypoints/semantic_prior_segformer.py
+segmentation_script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+segmentation_algorithm: mmdet_cascade_mask_rcnn
+
+segmentation_candidate_cfgs:
+  mmdet_cascade_mask_rcnn:
+    conda_env: mmdetection
+    repo_root: /home/xth/mmdetection331
+    cwd: /home/xth/mmdetection331
+    config_file: /home/xth/mmdetection331/configs/cascade_rcnn/cascade-mask-rcnn_r50_fpn_1x_coco.py
+    checkpoint: /home/xth/mmdetection331/checkpoints/cascade_mask_rcnn_r50_fpn_1x_coco_20200203-9d4dcb24.pth
+    driver_module: ITD_agent.segmentation.model_registry.adapters.mmdet_instance_adapter
+    device: cuda:0
+    score_thr: 0.2
+    min_area_px: 50
+    min_sem_overlap_ratio: 0.01
+    clip_to_msem: true
+    tile_size: 1536
+    tile_overlap: 256
+    tile_batch_size: 1
+    merge_iou_thr: 0.4
+    required_outputs: ["y_inst_shp"]
+
+grouped_inference_enabled: true
+grouped_inference_use_llm: true
+grouped_inference_buffer_m: 5.0
+
+default_segmentation_params:
+  diam_list: "128,192,320"
+  tile: 2048
+  overlap: 512
+  tile_overlap: 0.35
+  bsize: 256
+  augment: false
+  iou_merge_thr: 0.28
+
+diam_list: "128,192,320"
+tile: 2048
+overlap: 512
+tile_overlap: 0.35
+bsize: 256
+augment: false
+iou_merge_thr: 0.28
+
+dem_tif: /mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif
+slope_tif:
+aspect_tif:
+landform_tif:
+slope_position_tif:

@@ -1,0 +1,58 @@
+experiment_name: forest_agent_public_finetune
+run_name: isprs_itd_data_processing_external_finetune
+
+base_config: /home/xth/forest_agent_project/configs/templates/runtime/runtime_dom197_baseline.yaml
+
+output_dir: /mnt/f/forest_agent_project/outputs/JX_ShanXia/finetune_public/isprs_itd_data_processing
+
+trainer_backend: external
+external_dataset_source: public_coco
+external_dataset_dirname: external_data_processing_dataset
+external_train_out_dirname: training
+external_dataset_force_rebuild: true
+external_dataset_tile_size: 1024
+external_dataset_tile_overlap: 256
+
+public_dataset_root: /mnt/f/forest_seg_datasets/ISPRS_ITD/ITD
+public_dataset_split_mapping:
+  train: Training_set/Dataset_4_train
+  validation: Validation_set
+  val: Validation_set
+  test: Testing_set
+public_dataset_train_splits:
+  - train
+public_dataset_val_splits:
+  - validation
+public_dataset_test_splits:
+  - test
+public_dataset_image_dirname: images
+public_dataset_annotation_dirname: annotation
+
+epochs: 8
+batch_size: 1
+num_workers: 4
+lr: 1.0e-4
+weight_decay: 1.0e-4
+seed: 42
+bsize: 256
+
+train_command_template: |
+  source /home/xth/anaconda3/etc/profile.d/conda.sh
+  conda activate tcd
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+  export HF_FORCE_LOCAL=1
+  export HF_HUB_OFFLINE=1
+  export TRANSFORMERS_OFFLINE=1
+  export HF_DATASETS_OFFLINE=1
+  tcd-train semantic \
+    'model=segformer-mit-b5' \
+    'model.weights=/home/xth/tcd/models/tcd-segformer-mit-b5' \
+    'data.root={dataset_dir}' \
+    'data.output={trainer_output_dir}' \
+    '+model.config.learning_rate={lr}' \
+    'model.batch_size={batch_size}' \
+    'model.trainer.max_epochs={epochs}' \
+    'data.tile_size=512'
+
+enable_rerun_after_finetune: true
+finetuned_suffix: "_public_itd_ft_v1"

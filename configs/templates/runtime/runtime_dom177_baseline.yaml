@@ -1,0 +1,162 @@
+experiment_name: forest_agent_dev
+run_name: dom177_segmentation_baseline
+
+compartment_id: dom177_demo
+patch_id: dom177_full
+forest_type: dense_mixed
+agent_version: v1
+
+conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+conda_env: tcd
+work_dir: /home/xth/tcd/test_prediction
+
+input_image: /mnt/f/forest_agent_project/input/JX_ShanXia/DOM/dom177.TIF
+output_dir: /mnt/f/forest_agent_project/outputs/JX_ShanXia/dom177_segmentation_baseline
+
+metrics_json: /mnt/f/forest_agent_project/outputs/JX_ShanXia/dom177_segmentation_baseline/metrics.json
+details_csv: /mnt/f/forest_agent_project/outputs/JX_ShanXia/dom177_segmentation_baseline/details.csv
+
+xiaoban_shp: /mnt/f/forest_agent_project/input/JX_ShanXia/SHP/xiaoban29pro.shp
+xiaoban_id_field: "XBH"
+tree_count_field: "LMSL"
+crown_field: "PJGF"
+closure_field: "YBD"
+area_ha_field: "MJ_hm2"
+
+flat_slope_threshold_deg: 5.0
+plain_relief_threshold_m: 30.0
+
+terrain_landform_field: landform_type
+terrain_slope_class_field: slope_class
+terrain_aspect_class_field: aspect_class
+terrain_slope_position_field: slope_position_class
+
+semantic_prior_script: /home/xth/forest_agent_project/runtime_entrypoints/semantic_prior_segformer.py
+segmentation_script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+
+ITD_agent:
+  llm_gateway:
+    provider: doubao
+    enabled: true
+  planning:
+    adaptive_generation:
+      enabled: true
+      use_llm: true
+    roi_extraction:
+      enabled: true
+      use_llm: true
+      max_rounds: 2
+      top_k: 3
+      min_problem_cases: 1
+      buffer_m: 5.0
+      strategy_mode: auto
+  segmentation_models:
+    main_model:
+      name: legacy_cellpose_sam
+      script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+      description: 全场景通用主模型，负责首轮整图分割。
+    child_models:
+      - name: dense_canopy_template
+        template_profile: true
+        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+        description: 面向密闭林冠、粘连严重、数量偏少的 ROI 细化模板。
+        scene_tags: [dense_mixed, dense_forest]
+        terrain_tags: [gentle, moderate, hill_middle]
+        failure_categories: [dense_canopy_adhesion, count_underestimate, crown_overlap_conflict]
+        target_error_patterns: [count_under, crown, closure_low]
+        selection_hints:
+          - 优先处理郁闭度高、冠层重叠和漏检偏多的 ROI。
+        routing_priority: 60
+        runtime_overrides:
+          diam_list: "128,192,320"
+          tile: 2048
+          overlap: 512
+          tile_overlap: 0.35
+          augment: false
+          iou_merge_thr: 0.28
+      - name: steep_slope_template
+        template_profile: true
+        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+        description: 面向陡坡、山脊和高起伏地形 ROI 的细化模板。
+        scene_tags: [dense_mixed, mountain, hill]
+        terrain_tags: [steep, ridge, valley, mountain_middle, mountain_low, hill_high]
+        failure_categories: [terrain_shadow_confused, count_underestimate]
+        target_error_patterns: [count_under, closure_low, density_low]
+        selection_hints:
+          - 优先处理坡陡、起伏大、边界碎裂和漏检并存的 ROI。
+        routing_priority: 70
+        runtime_overrides:
+          diam_list: "96,192,320"
+          tile: 1536
+          overlap: 512
+          tile_overlap: 0.45
+          augment: true
+          iou_merge_thr: 0.24
+      - name: north_shade_template
+        template_profile: true
+        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+        description: 面向阴坡、阴影遮挡和闭合度恢复的细化模板。
+        scene_tags: [dense_mixed, shadow]
+        terrain_tags: [north, northeast, northwest, shadow, north_shade]
+        failure_categories: [terrain_shadow_confused, crown_boundary_fragmented]
+        target_error_patterns: [closure_low, count_under, crown]
+        selection_hints:
+          - 优先处理阴坡阴影、闭合度偏低和实例边界不稳的 ROI。
+        routing_priority: 75
+        runtime_overrides:
+          diam_list: "96,192,320"
+          tile: 1536
+          overlap: 512
+          tile_overlap: 0.45
+          augment: true
+          iou_merge_thr: 0.24
+      - name: large_crown_template
+        template_profile: true
+        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+        description: 面向稀疏大冠幅、过分裂和大树冠边界恢复的细化模板。
+        scene_tags: [sparse, open_forest]
+        terrain_tags: [gentle, moderate]
+        failure_categories: [count_overestimate, crown_boundary_fragmented]
+        target_error_patterns: [count_over, crown, closure_high]
+        selection_hints:
+          - 优先处理稀疏大冠幅区域和过分裂场景。
+        routing_priority: 55
+        runtime_overrides:
+          diam_list: "128,256,320"
+          tile: 2048
+          overlap: 512
+          tile_overlap: 0.25
+          augment: false
+          iou_merge_thr: 0.28
+
+grouped_inference_enabled: true
+grouped_inference_use_llm: true
+grouped_inference_buffer_m: 5.0
+
+# Default fallback segmentation params.
+# Current code still reads the top-level fields below directly.
+# In the planned grouped/planner workflow, these values should be treated as
+# template defaults and overridden by data-driven per-group configs.
+default_segmentation_params:
+  diam_list: "128,192,320"
+  tile: 2048
+  overlap: 512
+  tile_overlap: 0.35
+  bsize: 256
+  augment: false
+  iou_merge_thr: 0.28
+
+# Backward-compatible top-level params used by the current pipeline.
+diam_list: "128,192,320"
+tile: 2048
+overlap: 512
+tile_overlap: 0.35
+bsize: 256
+augment: false
+iou_merge_thr: 0.28
+
+dem_tif: /mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif
+slope_tif:
+aspect_tif:
+landform_tif:
+slope_position_tif:

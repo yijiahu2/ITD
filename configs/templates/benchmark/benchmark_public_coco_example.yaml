@@ -1,0 +1,56 @@
+base_config: /home/xth/forest_agent_project/configs/templates/runtime/runtime_dom197_baseline.yaml
+
+# 公开数据集根目录，目录结构示例：
+# dataset_root/
+#   Training_set/
+#     image/
+#     annotation/
+#   Validation_set/
+#     image/
+#     annotation/
+#   Testing_set/
+#     image/
+#     annotation/   # 若无标注可留空或不存在
+dataset_root: /path/to/Empowering_tree_scale_dataset
+
+# 输出目录：每个 split 会单独生成语义先验结果、分割结果、PR 曲线、匹配明细、汇总 json/csv
+output_root: /mnt/f/forest_agent_project/outputs/JX_ShanXia/public_coco_benchmark
+
+# 推荐先跑 validation，确认推理链路与评估逻辑无误后，再扩到 train/test。
+benchmark_splits:
+  - validation
+
+split_mapping:
+  train: Training_set
+  validation: Validation_set
+  val: Validation_set
+  test: Testing_set
+
+image_dirname: image
+annotation_dirname: annotation
+
+# 论文描述中的实例分割指标：
+# - P / R 基于 IoU + confidence threshold
+# - AP 为 P-R 曲线积分
+eval_iou_thresholds:
+  - 0.5
+  - 0.75
+report_confidence_threshold: 0.5
+
+# 当前 agent 默认没有直接输出实例 score，这里用语义先验概率给每个实例补一个分数。
+# 可选：
+# - semantic_prior_mean_prob
+# - semantic_prior_median_prob
+# - semantic_prior_max_prob
+# - constant_one
+prediction_score_mode: semantic_prior_mean_prob
+
+# 若希望把语义先验概率图也落盘，方便排查 AP 变化来源，可打开。
+save_semantic_prior_probability_tif: false
+
+# 只在 benchmark 场景覆盖 base_config 中与公开数据集无关或需要单独试验的参数。
+base_config_overrides:
+  grouped_inference_enabled: false
+  keep_debug_outputs: true
+  keep_semantic_prior_artifacts: true
+  augment: false

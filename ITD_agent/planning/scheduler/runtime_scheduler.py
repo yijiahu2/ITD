@@ -141,12 +141,24 @@ def _collect_scene_tags(scene_profile: dict[str, Any]) -> set[str]:
     tags.update(_expand_tags(scene_profile.get("tags")))
     tags.update(_expand_tags(scene_profile.get("stand_condition_labels")))
     tags.update(_expand_tags(scene_profile.get("texture_labels")))
+    tags.update(_expand_tags(scene_profile.get("terrain_labels")))
     return tags
 
 
-def _collect_terrain_tags(top_cases: list[dict[str, Any]], scene_profile: dict[str, Any]) -> set[str]:
+def _collect_terrain_tags(
+    top_cases: list[dict[str, Any]],
+    scene_profile: dict[str, Any],
+    terrain_analysis: dict[str, Any] | None = None,
+) -> set[str]:
     tags = set()
     tags.update(_expand_tags(scene_profile.get("terrain_type")))
+    terrain = terrain_analysis or {}
+    tags.update(_expand_tags(terrain.get("labels")))
+    tags.update(_expand_tags((terrain.get("dom_context") or {}).get("landform_type")))
+    tags.update(_expand_tags((terrain.get("dom_context") or {}).get("slope_class")))
+    tags.update(_expand_tags((terrain.get("dom_context") or {}).get("aspect_class")))
+    tags.update(_expand_tags((terrain.get("dom_context") or {}).get("slope_position_class")))
+    tags.update(_expand_tags((terrain.get("global_background") or {}).get("landform_type")))
     for case in top_cases[:5]:
         for key in ["landform_type", "slope_class", "aspect_class", "slope_position_class"]:
             tags.update(_expand_tags(case.get(key)))
@@ -197,6 +209,7 @@ def _collect_error_patterns(top_cases: list[dict[str, Any]], metrics: dict[str, 
 
 def _build_child_model_routing_context(scheduler_context: dict[str, Any]) -> dict[str, Any]:
     scene_profile = scheduler_context.get("scene_profile") or {}
+    terrain_analysis = scheduler_context.get("terrain_analysis") or {}
     roi_assessment = scheduler_context.get("roi_assessment") or {}
     details_summary = (roi_assessment.get("details_summary") or scheduler_context.get("details_summary") or {})
     top_cases = details_summary.get("top_k_xiaoban") or []
@@ -208,9 +221,10 @@ def _build_child_model_routing_context(scheduler_context: dict[str, Any]) -> dic
     ]
     return {
         "scene_tags": sorted(_collect_scene_tags(scene_profile)),
-        "terrain_tags": sorted(_collect_terrain_tags(top_cases, scene_profile)),
+        "terrain_tags": sorted(_collect_terrain_tags(top_cases, scene_profile, terrain_analysis)),
         "failure_categories": sorted(set(failure_categories)),
         "target_error_patterns": sorted(_collect_error_patterns(top_cases, metrics)),
+        "terrain_analysis": terrain_analysis,
         "top_problem_cases": top_cases[:5],
     }
 
@@ -286,6 +300,44 @@ def _rank_child_model_profiles(runtime_cfg: dict[str, Any], scheduler_context: d
     return profiles
 
 
+def _accept_preferred_child_model(
+    preferred_name: str | None,
+    profiles: list[dict[str, Any]],
+    *,
+    source: str,
+    top_k: int = 2,
+    max_score_gap: float = 24.0,
+) -> tuple[str | None, str | None]:
+    normalized = str(preferred_name or "").strip()
+    if not normalized or not profiles:
+        return None, None
+
+    target_idx = None
+    target_profile = None
+    for idx, profile in enumerate(profiles):
+        if str(profile.get("name") or "").strip() == normalized:
+            target_idx = idx
+            target_profile = profile
+            break
+    if target_profile is None or target_idx is None:
+        return None, None
+
+    if target_idx == 0:
+        return normalized, f"{source} 指定子模型模板: {normalized}"
+
+    top_score = float(profiles[0].get("score") or 0.0)
+    target_score = float(target_profile.get("score") or 0.0)
+    if target_idx < min(top_k, len(profiles)) and (top_score - target_score) <= max_score_gap:
+        return normalized, (
+            f"{source} 指定子模型模板: {normalized}；"
+            f"排名第 {target_idx + 1}，且与最优模板分差 {top_score - target_score:.1f}，允许保留。"
+        )
+    return None, (
+        f"{source} 指定模板 {normalized} 被规则路由拒绝；"
+        f"其排名第 {target_idx + 1}，较最优模板低 {top_score - target_score:.1f} 分。"
+    )
+
+
 def _resolve_preferred_child_model(
     *,
     runtime_cfg: dict[str, Any],
@@ -297,12 +349,20 @@ def _resolve_preferred_child_model(
     llm_preferred = str((((llm_result or {}).get("child_model_call_plan") or {}).get("preferred_child_model") or "")).strip()
     roi_preferred = str((((scheduler_context.get("roi_assessment") or {}).get("decision") or {}).get("preferred_child_model") or "")).strip()
 
-    if llm_preferred and llm_preferred in candidate_names:
-        return llm_preferred, profiles, f"LLM 指定子模型模板: {llm_preferred}"
-    if roi_preferred and roi_preferred in candidate_names:
-        return roi_preferred, profiles, f"ROI 决策指定子模型模板: {roi_preferred}"
+    accepted_name, accepted_reason = _accept_preferred_child_model(llm_preferred, profiles, source="LLM")
+    if accepted_name:
+        return accepted_name, profiles, str(accepted_reason)
+
+    accepted_name, accepted_reason = _accept_preferred_child_model(roi_preferred, profiles, source="ROI 决策")
+    if accepted_name:
+        return accepted_name, profiles, str(accepted_reason)
+
     if profiles:
-        return str(profiles[0]["name"]), profiles, str(profiles[0]["selection_reason"])
+        fallback_reason = str(profiles[0]["selection_reason"])
+        rejected_reasons = [reason for reason in [accepted_reason] if reason]
+        if rejected_reasons:
+            fallback_reason = "；".join(rejected_reasons + [f"回退到规则最优模板: {profiles[0]['name']}"])
+        return str(profiles[0]["name"]), profiles, fallback_reason
 
     fallback_name = None
     current_algorithm = runtime_cfg.get("segmentation_algorithm") or scheduler_context.get("current_parameters", {}).get("segmentation_algorithm")
@@ -334,10 +394,9 @@ def _build_roi_refine_plan(
         llm_result=llm_result,
     )
     candidates = [str(item["name"]) for item in ranked_profiles if item.get("name")] or _get_candidate_child_models(runtime_cfg, scheduler_context)
-    preferred_child_model = llm_plan.get("preferred_child_model") or preferred_child_model
     selection_rules = _as_str_list(llm_plan.get("selection_rules")) or [
         "优先选择综合质量分数最低且多轮未收敛的 ROI。",
-        "优先细化纹理复杂、地形起伏大、实例重叠冲突明显的 ROI。",
+        "优先细化纹理复杂、DOM 地形起伏大、实例重叠冲突明显的 ROI。",
         "若存在独立子模型模板，优先选择与失败类别、地形标签和误差模式匹配度最高的模板。",
     ]
     stop_rules = _as_str_list(llm_plan.get("stop_rules")) or [
@@ -373,10 +432,10 @@ def _build_child_model_call_plan(
         llm_result=llm_result,
     )
     candidates = [str(item["name"]) for item in ranked_profiles if item.get("name")] or _get_candidate_child_models(runtime_cfg, scheduler_context)
-    preferred_child_model = llm_plan.get("preferred_child_model") or preferred_child_model
     routing_rules = _as_str_list(llm_plan.get("routing_rules")) or [
-        "地形复杂和冠幅误差偏大的 ROI 优先路由到更强的子模型。",
+        "DOM 地形复杂和冠幅误差偏大的 ROI 优先路由到更强的子模型。",
         "实例粘连和边界碎裂明显的 ROI 优先启用边界更稳健的子模型。",
+        "全局 DEM 地形标签仅作为弱背景，不得替代 DOM/ROI 层地形上下文做主判断。",
         "若未配置独立 checkpoint，则允许使用子模型模板复用主分割引擎并套用模板化运行参数。",
     ]
     escalation_rules = _as_str_list(llm_plan.get("escalation_rules")) or [
@@ -647,6 +706,7 @@ def plan_runtime_config(
             roi_refine_plan=roi_refine_plan,
             child_model_call_plan=child_model_call_plan,
             knowledge_embedding_plan=knowledge_embedding_plan,
+            pilot_search_result={},
         ).to_dict()
 
     planning_result = generate_adaptive_config_from_template(
@@ -699,6 +759,7 @@ def plan_runtime_config(
         roi_refine_plan=roi_refine_plan,
         child_model_call_plan=child_model_call_plan,
         knowledge_embedding_plan=knowledge_embedding_plan,
+        pilot_search_result=planning_result.get("pilot_search_result") or {},
     ).to_dict()
 
 

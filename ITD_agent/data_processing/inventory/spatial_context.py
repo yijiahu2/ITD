@@ -257,6 +257,70 @@ def summarize_xiaoban_terrain_classes(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
     return summary
 
 
+def _build_raster_bounds_gdf(raster_path: str | Path) -> gpd.GeoDataFrame:
+    with rasterio.open(raster_path) as src:
+        if src.crs is None:
+            raise ValueError(f"Raster has no CRS: {raster_path}")
+        bounds_dict = {
+            "left": float(src.bounds.left),
+            "bottom": float(src.bounds.bottom),
+            "right": float(src.bounds.right),
+            "top": float(src.bounds.top),
+        }
+        return build_bounds_gdf(bounds_dict, src.crs)
+
+
+def summarize_terrain_for_geometry(
+    *,
+    dem_tif: Optional[str | Path],
+    slope_tif: Optional[str | Path],
+    aspect_tif: Optional[str | Path],
+    geom_gdf: gpd.GeoDataFrame,
+    terrain_rule_cfg: Optional[TerrainRuleConfig] = None,
+) -> Dict[str, Any]:
+    if not dem_tif or not slope_tif or not aspect_tif:
+        return {}
+
+    dem_st = raster_stats_for_geom(str(dem_tif), geom_gdf)
+    slope_st = raster_stats_for_geom(str(slope_tif), geom_gdf)
+    aspect_st = aspect_stats_for_geom(str(aspect_tif), geom_gdf)
+    mean_elev = dem_st.get("mean")
+    relief_elev = dem_st.get("relief")
+    mean_slope = slope_st.get("mean")
+    mean_aspect_deg = aspect_st.get("mean_aspect_deg")
+
+    rel_norm = None
+    dem_min = dem_st.get("min")
+    dem_max = dem_st.get("max")
+    if mean_elev is not None and dem_min is not None and dem_max is not None:
+        if dem_max > dem_min:
+            rel_norm = float((mean_elev - dem_min) / (dem_max - dem_min))
+        else:
+            rel_norm = 0.5
+
+    summary = summarize_terrain_classes(
+        elevation_mean_m=mean_elev,
+        relief_10km_m=relief_elev,
+        slope_mean_deg=mean_slope,
+        aspect_mean_deg=mean_aspect_deg,
+        relative_elevation_norm=rel_norm,
+        tpi_local=None,
+        flow_accumulation_proxy=None,
+        rule_cfg=terrain_rule_cfg or TerrainRuleConfig(),
+    )
+    summary.update(
+        {
+            "elevation_mean_m": mean_elev,
+            "relief_10km_m": relief_elev,
+            "slope_mean_deg": mean_slope,
+            "aspect_mean_deg": mean_aspect_deg,
+            "relative_elevation_norm": rel_norm,
+            "pixel_count": dem_st.get("count"),
+        }
+    )
+    return summary
+
+
 def enrich_xiaoban_clip_fields(
     clipped_gdf: gpd.GeoDataFrame,
     source_gdf: gpd.GeoDataFrame,
@@ -526,18 +590,28 @@ def prepare_spatial_context(
         "dom_bounds": bounds_dict,
         "dom_crs": str(dom_crs),
         "dom_shape": [int(dom_profile["height"]), int(dom_profile["width"])],
+        "terrain_layer_policy": {
+            "global_role": "whole_dem_background_for_llm_scheduler_only",
+            "dom_role": "dom_extent_recomputed_primary_context",
+            "roi_role": "inherit_dom_context_products",
+        },
         "global_dem_tif": str(dem_tif) if dem_tif else None,
         "global_slope_tif": None,
         "global_aspect_tif": None,
         "global_landform_tif": None,
         "global_slope_position_tif": None,
+        "global_terrain_summary_json": None,
+        "global_terrain_background": {},
         "dem_tif": None,
         "slope_tif": None,
         "aspect_tif": None,
         "landform_tif": None,
         "slope_position_tif": None,
+        "dom_terrain_summary_json": None,
+        "dom_terrain_context": {},
         "xiaoban_shp": None,
         "xiaoban_vector": None,
+        "xiaoban_terrain_class_summary": {},
         "terrain_constraint_fields": {
             "landform_type": "landform_type",
             "slope_class": "slope_class",
@@ -575,6 +649,18 @@ def prepare_spatial_context(
         result["global_aspect_tif"] = str(global_aspect) if global_aspect.exists() else None
         result["global_landform_tif"] = str(global_landform) if global_landform.exists() else None
         result["global_slope_position_tif"] = str(global_slope_position) if global_slope_position.exists() else None
+        result["global_terrain_summary_json"] = str(global_summary_json) if global_summary_json.exists() else None
+        global_bounds_gdf = _build_raster_bounds_gdf(dem_tif)
+        result["global_terrain_background"] = summarize_terrain_for_geometry(
+            dem_tif=str(dem_tif),
+            slope_tif=str(global_slope),
+            aspect_tif=str(global_aspect),
+            geom_gdf=global_bounds_gdf,
+            terrain_rule_cfg=TerrainRuleConfig(
+                flat_slope_threshold_deg=flat_slope_threshold_deg,
+                plain_relief_threshold_m=plain_relief_threshold_m,
+            ),
+        )
 
         dem_clip = out_dir / "context_dem.tif"
         slope_clip = out_dir / "context_slope.tif"
@@ -608,6 +694,17 @@ def prepare_spatial_context(
         result["landform_tif"] = str(landform_clip)
         result["slope_position_tif"] = str(slope_position_clip)
         result["terrain_summary_json"] = str(terrain_summary_json)
+        result["dom_terrain_summary_json"] = str(terrain_summary_json)
+        result["dom_terrain_context"] = summarize_terrain_for_geometry(
+            dem_tif=str(dem_clip),
+            slope_tif=str(slope_clip),
+            aspect_tif=str(aspect_clip),
+            geom_gdf=_build_raster_bounds_gdf(dem_clip),
+            terrain_rule_cfg=TerrainRuleConfig(
+                flat_slope_threshold_deg=flat_slope_threshold_deg,
+                plain_relief_threshold_m=plain_relief_threshold_m,
+            ),
+        )
 
     if xiaoban_shp:
         if not xiaoban_id_field:
@@ -635,9 +732,17 @@ def prepare_spatial_context(
         result["xiaoban_vector"] = str(xiaoban_clip)
         try:
             xiaoban_context = gpd.read_file(xiaoban_clip)
-            result["terrain_class_summary"] = summarize_xiaoban_terrain_classes(xiaoban_context)
+            result["xiaoban_terrain_class_summary"] = summarize_xiaoban_terrain_classes(xiaoban_context)
         except Exception:
-            result["terrain_class_summary"] = {}
+            result["xiaoban_terrain_class_summary"] = {}
+
+    result["terrain_class_summary"] = result.get("xiaoban_terrain_class_summary") or {}
+    dom_context = result.get("dom_terrain_context") or {}
+    if dom_context:
+        result["landform_type"] = dom_context.get("landform_type")
+        result["slope_class"] = dom_context.get("slope_class")
+        result["aspect_class"] = dom_context.get("aspect_class")
+        result["slope_position_class"] = dom_context.get("slope_position_class")
 
     summary_json = out_dir / "spatial_context_summary.json"
     with open(summary_json, "w", encoding="utf-8") as f:

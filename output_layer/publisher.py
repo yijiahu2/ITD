@@ -87,11 +87,39 @@ def render_segmentation_visualization(
         except Exception:
             points_gdf = None
 
+    raster_crs = None
+    if background_raster and Path(background_raster).exists():
+        try:
+            import rasterio
+
+            with rasterio.open(background_raster) as src:
+                raster_crs = src.crs
+        except Exception:
+            raster_crs = None
+
+    if raster_crs is not None and crowns_gdf.crs is not None and crowns_gdf.crs != raster_crs:
+        try:
+            crowns_gdf = crowns_gdf.to_crs(raster_crs)
+        except Exception:
+            raster_crs = None
+
+    if (
+        points_gdf is not None
+        and not points_gdf.empty
+        and raster_crs is not None
+        and points_gdf.crs is not None
+        and points_gdf.crs != raster_crs
+    ):
+        try:
+            points_gdf = points_gdf.to_crs(raster_crs)
+        except Exception:
+            points_gdf = None
+
     dst_path = Path(dst)
     ensure_parent(dst_path)
     fig, ax = plt.subplots(figsize=(10, 10), dpi=220)
 
-    if background_raster and Path(background_raster).exists():
+    if background_raster and Path(background_raster).exists() and raster_crs is not None:
         try:
             import rasterio
             from rasterio.plot import show
@@ -108,6 +136,12 @@ def render_segmentation_visualization(
     crowns_gdf.plot(ax=ax, linewidth=0, color="#7ccf7a", alpha=0.35)
     if points_gdf is not None and not points_gdf.empty:
         points_gdf.plot(ax=ax, markersize=6, color="#c92a2a", alpha=0.9)
+    minx, miny, maxx, maxy = crowns_gdf.total_bounds
+    if maxx > minx and maxy > miny:
+        pad_x = max((maxx - minx) * 0.03, 1.0)
+        pad_y = max((maxy - miny) * 0.03, 1.0)
+        ax.set_xlim(minx - pad_x, maxx + pad_x)
+        ax.set_ylim(miny - pad_y, maxy + pad_y)
     ax.set_axis_off()
     ax.set_aspect("equal")
     fig.tight_layout(pad=0)

@@ -35,6 +35,7 @@ class PlanningDecision:
     child_model_call_plan: dict[str, Any] = field(default_factory=dict)
     finetune_training_plan: dict[str, Any] = field(default_factory=dict)
     knowledge_embedding_plan: dict[str, Any] = field(default_factory=dict)
+    pilot_search_result: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

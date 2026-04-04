@@ -72,6 +72,36 @@ def overlap_share_with_geom(geom, region_geom) -> float:
     return inter_area / area
 
 
+def _equivalent_width(area_m2: float) -> float:
+    if area_m2 <= 0:
+        return 0.0
+    return 2.0 * ((area_m2 / 3.141592653589793) ** 0.5)
+
+
+def _is_nested_like_duplicate(
+    larger_geom,
+    smaller_geom,
+    *,
+    larger_area: float,
+    smaller_area: float,
+    inter_area: float,
+    min_overlap_share: float = 0.35,
+    min_area_ratio: float = 1.15,
+    centroid_distance_factor: float = 0.35,
+    max_centroid_distance_m: float = 1.0,
+) -> bool:
+    if larger_geom is None or larger_geom.is_empty or smaller_geom is None or smaller_geom.is_empty:
+        return False
+    if larger_area <= 0 or smaller_area <= 0 or inter_area <= 0:
+        return False
+
+    overlap_share_small = inter_area / max(smaller_area, 1e-9)
+    area_ratio = larger_area / max(smaller_area, 1e-9)
+    centroid_distance = float(larger_geom.centroid.distance(smaller_geom.centroid))
+    centroid_limit = min(max_centroid_distance_m, max(_equivalent_width(smaller_area) * centroid_distance_factor, 0.25))
+    return overlap_share_small >= min_overlap_share and area_ratio >= min_area_ratio and centroid_distance <= centroid_limit
+
+
 def dedupe_instances_by_overlap(
     inst_gdf: gpd.GeoDataFrame,
     overlap_ratio_thr: float = 0.6,
@@ -98,7 +128,18 @@ def dedupe_instances_by_overlap(
             inter_area = float(geom.intersection(other).area)
             if inter_area <= 0:
                 continue
-            denom = max(min(float(ordered["_area_m2"].iloc[i]), float(ordered["_area_m2"].iloc[j])), 1e-6)
+            area_i = float(ordered["_area_m2"].iloc[i])
+            area_j = float(ordered["_area_m2"].iloc[j])
+            if _is_nested_like_duplicate(
+                geom,
+                other,
+                larger_area=area_i,
+                smaller_area=area_j,
+                inter_area=inter_area,
+            ):
+                keep[j] = False
+                continue
+            denom = max(min(area_i, area_j), 1e-6)
             if inter_area / denom >= overlap_ratio_thr:
                 keep[j] = False
 
@@ -120,12 +161,6 @@ def _metric_crs_for_instances(inst_gdf: gpd.GeoDataFrame, boundary_gdf: gpd.GeoD
     except Exception:
         pass
     return "EPSG:3857"
-
-
-def _equivalent_width(area_m2: float) -> float:
-    if area_m2 <= 0:
-        return 0.0
-    return 2.0 * ((area_m2 / 3.141592653589793) ** 0.5)
 
 
 def _bridge_split_geometry(geom, close_gap_m: float):

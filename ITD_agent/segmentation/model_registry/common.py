@@ -13,7 +13,7 @@ from ITD_agent.segmentation.model_registry.output_utils import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def get_selected_algorithm_name(cfg: dict[str, Any]) -> str:

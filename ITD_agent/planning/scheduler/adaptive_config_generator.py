@@ -8,6 +8,7 @@ from typing import Any
 from ITD_agent.config_adapter import save_runtime_config
 from ITD_agent.llm_gateway import request_planning_decision
 from ITD_agent.planning.scheduler.context_builder import build_scheduler_context
+from ITD_agent.planning.scheduler.parameter_search import run_main_model_parameter_search
 from ITD_agent.planning.scheduler.template_manager import apply_parameter_updates, load_config_template
 
 
@@ -194,11 +195,18 @@ def _merge_core_segmentation_updates(
     merged = deepcopy(base_updates or {})
     recommendation = scheduler_context.get("segmentation_parameter_recommendation") or {}
     recommended_updates = recommendation.get("parameter_updates") or {}
+    recommendation_confidence = float(recommendation.get("confidence") or 0.0)
     if not isinstance(recommended_updates, dict) or not recommended_updates:
         return merged
 
     core_keys = {"diam_list", "tile", "overlap", "tile_overlap", "augment", "iou_merge_thr", "bsize"}
+    model_family = str(recommendation.get("model_family") or "").strip().lower()
     has_llm = bool(llm_result)
+    if has_llm and model_family == "legacy_cellpose_sam" and recommendation_confidence >= 0.75:
+        for key in core_keys:
+            if key in recommended_updates:
+                merged[key] = deepcopy(recommended_updates[key])
+        return merged
     if has_llm:
         for key in core_keys:
             if key not in merged and key in recommended_updates:
@@ -209,6 +217,15 @@ def _merge_core_segmentation_updates(
         if key in recommended_updates:
             merged[key] = deepcopy(recommended_updates[key])
     return merged
+
+
+def _is_parameter_search_enabled(runtime_cfg: dict[str, Any]) -> bool:
+    planning_cfg = ((runtime_cfg.get("ITD_agent") or {}).get("planning") or {})
+    adaptive_cfg = planning_cfg.get("adaptive_generation") or {}
+    search_cfg = adaptive_cfg.get("parameter_search")
+    if not isinstance(search_cfg, dict):
+        return False
+    return bool(search_cfg.get("enabled", False))
 
 
 def generate_adaptive_config_from_template(
@@ -248,6 +265,23 @@ def generate_adaptive_config_from_template(
         scheduler_context=scheduler_context,
         llm_result=llm_result,
     )
+    pilot_search_result: dict[str, Any] | None = None
+    if (
+        str(runtime_cfg.get("_planning_stage") or "").strip().lower() == "main_model"
+        and _is_parameter_search_enabled(runtime_cfg)
+    ):
+        pilot_search_result = run_main_model_parameter_search(
+            runtime_cfg=runtime_cfg,
+            scheduler_context=scheduler_context,
+            preliminary_updates=parameter_updates,
+            output_root=Path(output_path).resolve().parent / "pilot_parameter_search",
+        )
+        selected_updates = (pilot_search_result or {}).get("selected_parameter_updates") or {}
+        if isinstance(selected_updates, dict) and selected_updates:
+            for key in ["diam_list", "tile", "overlap", "tile_overlap", "augment", "iou_merge_thr", "bsize"]:
+                if key in selected_updates:
+                    parameter_updates[key] = deepcopy(selected_updates[key])
+        scheduler_context["pilot_parameter_search"] = pilot_search_result or {}
     generated_cfg = apply_parameter_updates(template_cfg, parameter_updates)
     generated_cfg = _preserve_runtime_context(generated_cfg, runtime_cfg)
     # Re-apply the explicit planning updates after runtime preservation so only
@@ -262,4 +296,5 @@ def generate_adaptive_config_from_template(
         "parameter_updates": parameter_updates,
         "llm_result": llm_result,
         "llm_gateway_result": llm_gateway_result,
+        "pilot_search_result": pilot_search_result or {},
     }

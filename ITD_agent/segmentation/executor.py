@@ -10,7 +10,7 @@ from ITD_agent.segmentation.contracts import SegmentationExecutionRequest, Segme
 from tools.process_runner import run_streaming
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _ensure_parent(path: str | Path) -> None:
@@ -110,7 +110,15 @@ def _apply_model_entry(cfg: dict[str, Any], model_role: str, model_entry: dict[s
         if model_entry.get(key):
             resolved[key] = model_entry[key]
     if isinstance(model_entry.get("runtime_overrides"), dict):
-        resolved.update(model_entry["runtime_overrides"])
+        core_runtime_keys = {"diam_list", "tile", "overlap", "tile_overlap", "augment", "iou_merge_thr", "bsize"}
+        force_runtime_overrides = bool(model_entry.get("force_runtime_overrides", False))
+        for key, value in model_entry["runtime_overrides"].items():
+            if force_runtime_overrides:
+                resolved[key] = value
+                continue
+            if key in core_runtime_keys and resolved.get(key) not in (None, ""):
+                continue
+            resolved[key] = value
     return resolved
 
 

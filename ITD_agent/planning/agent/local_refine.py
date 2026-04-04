@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import geopandas as gpd
 import pandas as pd
 from shapely.ops import unary_union
+from shapely import wkt as shapely_wkt
 
 from ITD_agent.planning.agent.config_builder import load_yaml, save_yaml
 from ITD_agent.data_processing.roi.extractor import (
@@ -43,25 +44,19 @@ from tools.runtime_cache_client import run_semantic_prior_task_via_worker
 # =========================
 
 DEFAULT_BASE_PARAMS = {
-    "diam_list": "96,192,320",
-    "tile": 1536,
-    "overlap": 512,
+    "diam_list": "160,256,384",
+    "tile": 2048,
+    "overlap": 128,
     "tile_overlap": 0.35,
     "augment": True,
-    "iou_merge_thr": 0.28,
+    "iou_merge_thr": 0.50,
     "bsize": 256,
 }
 
-SAFE_TILE = [1536, 2048]
-SAFE_OVERLAP = [384, 512]
-SAFE_TILE_OVERLAP = [0.25, 0.35, 0.45]
-SAFE_IOU = [0.18, 0.22, 0.24, 0.28]
-SAFE_DIAM = [
-    "96,160,256",
-    "96,192,320",
-    "128,192,320",
-    "128,256,320",
-]
+SAFE_TILE = [1536, 1792, 2048, 2304]
+SAFE_OVERLAP = [128, 192, 256, 384, 512]
+SAFE_TILE_OVERLAP = [0.25, 0.30, 0.35, 0.40, 0.45]
+SAFE_IOU = [0.18, 0.22, 0.24, 0.28, 0.30, 0.35, 0.40, 0.50]
 
 
 def ensure_parent(path: Path):
@@ -105,31 +100,105 @@ def safe_str(v, default=None):
     return str(v)
 
 
+def _normalize_model_name(name: Any) -> str:
+    return safe_str(name, "").strip().lower()
+
+
+def _nearest_choice(value: float, choices: List[float]) -> float:
+    return min(choices, key=lambda item: abs(float(item) - float(value)))
+
+
+def _normalize_diam_list(value: Any) -> str:
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+    elif isinstance(value, (list, tuple)):
+        parts = [str(part).strip() for part in value if str(part).strip()]
+    else:
+        parts = []
+
+    normalized: list[int] = []
+    for part in parts:
+        try:
+            diameter = int(round(float(part)))
+        except Exception:
+            continue
+        diameter = max(64, min(512, diameter))
+        if diameter not in normalized:
+            normalized.append(diameter)
+
+    if len(normalized) < 2:
+        return DEFAULT_BASE_PARAMS["diam_list"]
+    return ",".join(str(item) for item in normalized)
+
+
 def sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(DEFAULT_BASE_PARAMS)
     if params:
         out.update(params)
 
-    if out.get("tile") not in SAFE_TILE:
+    try:
+        out["tile"] = int(_nearest_choice(float(out.get("tile", DEFAULT_BASE_PARAMS["tile"])), SAFE_TILE))
+    except Exception:
         out["tile"] = DEFAULT_BASE_PARAMS["tile"]
 
-    if out.get("overlap") not in SAFE_OVERLAP:
+    try:
+        out["overlap"] = int(_nearest_choice(float(out.get("overlap", DEFAULT_BASE_PARAMS["overlap"])), SAFE_OVERLAP))
+    except Exception:
         out["overlap"] = DEFAULT_BASE_PARAMS["overlap"]
 
-    if out.get("tile_overlap") not in SAFE_TILE_OVERLAP:
+    try:
+        out["tile_overlap"] = float(_nearest_choice(float(out.get("tile_overlap", DEFAULT_BASE_PARAMS["tile_overlap"])), SAFE_TILE_OVERLAP))
+    except Exception:
         out["tile_overlap"] = DEFAULT_BASE_PARAMS["tile_overlap"]
 
-    if out.get("iou_merge_thr") not in SAFE_IOU:
+    try:
+        out["iou_merge_thr"] = float(_nearest_choice(float(out.get("iou_merge_thr", DEFAULT_BASE_PARAMS["iou_merge_thr"])), SAFE_IOU))
+    except Exception:
         out["iou_merge_thr"] = DEFAULT_BASE_PARAMS["iou_merge_thr"]
 
-    if out.get("diam_list") not in SAFE_DIAM:
-        out["diam_list"] = DEFAULT_BASE_PARAMS["diam_list"]
+    out["diam_list"] = _normalize_diam_list(out.get("diam_list"))
 
     out["augment"] = bool(out.get("augment", True))
 
     # 关键运行约束：强制固定
     out["bsize"] = 256
     return out
+
+
+def _resolve_preferred_child_runtime_overrides(
+    preferred_child_model: str | None,
+    child_plan_summary: dict[str, Any] | None,
+) -> Dict[str, Any]:
+    if not preferred_child_model or not isinstance(child_plan_summary, dict):
+        return {}
+    call_plan = child_plan_summary.get("child_model_call_plan") or {}
+    profiles = call_plan.get("candidate_profiles") or []
+    preferred_name = _normalize_model_name(preferred_child_model)
+    for item in profiles:
+        if not isinstance(item, dict):
+            continue
+        if _normalize_model_name(item.get("name")) != preferred_name:
+            continue
+        overrides = item.get("runtime_overrides")
+        if isinstance(overrides, dict):
+            return dict(overrides)
+        return {}
+    return {}
+
+
+def _merge_preferred_child_base_params(
+    base_params: Dict[str, Any],
+    preferred_child_model: str | None,
+    child_plan_summary: dict[str, Any] | None,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    overrides = _resolve_preferred_child_runtime_overrides(preferred_child_model, child_plan_summary)
+    if not overrides:
+        return sanitize_params(base_params), {}
+    merged = dict(base_params)
+    for key in ["diam_list", "tile", "overlap", "tile_overlap", "augment", "iou_merge_thr", "bsize"]:
+        if key in overrides:
+            merged[key] = overrides[key]
+    return sanitize_params(merged), sanitize_params(overrides)
 
 
 def copy_vector_dataset(src_shp: str, dst_shp: str):
@@ -810,40 +879,37 @@ def apply_terrain_adjustments(
     is_steep_complex = slope_class == "steep" or relief_class == "high_relief" or is_complex_landform
 
     if is_steep_complex:
-        params["overlap"] = 512
-        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.45)
+        params["overlap"] = max(int(params.get("overlap", 128)), 192)
+        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.40)
         notes.append("steep_or_high_relief_overlap_boost")
 
     if is_ridge_valley:
-        params["tile"] = 1536
-        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.45)
-        notes.append("ridge_valley_smaller_tile")
+        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.40)
+        params["overlap"] = max(int(params.get("overlap", 128)), 192)
+        notes.append("ridge_valley_context_boost")
 
     if is_shaded and dominant_error in {"count", "closure", "crown"}:
         params["augment"] = True
-        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.45)
+        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.40)
         notes.append("shaded_slope_recall_boost")
 
     if dominant_error in {"count", "density"} and count_direction == "under":
         if is_ridge_valley or is_shaded:
-            params["diam_list"] = "96,160,256"
-            params["tile"] = 1536
-            params["iou_merge_thr"] = min(float(params.get("iou_merge_thr", 0.28)), 0.24)
-            notes.append("terrain_underseg_small_crown_boost")
+            params["augment"] = True
+            params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.40)
+            params["iou_merge_thr"] = max(float(params.get("iou_merge_thr", 0.28)), 0.35)
+            notes.append("terrain_underseg_recall_boost")
 
     if dominant_error == "closure" and cover_direction == "low":
         if is_complex_landform or is_ridge_valley:
             params["augment"] = True
-            params["tile"] = 1536
-            params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.45)
+            params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.40)
             notes.append("terrain_low_closure_recovery")
 
     if dominant_error in {"count", "density"} and count_direction == "over":
         if is_steep_complex:
-            params["diam_list"] = "128,256,320"
-            params["tile"] = 2048
-            params["iou_merge_thr"] = max(float(params.get("iou_merge_thr", 0.24)), 0.28)
-            params["augment"] = False
+            params["iou_merge_thr"] = max(float(params.get("iou_merge_thr", 0.24)), 0.40)
+            params["tile_overlap"] = min(float(params.get("tile_overlap", 0.35)), 0.35)
             notes.append("steep_overseg_merge_bias")
 
     return sanitize_params(params), notes
@@ -876,149 +942,52 @@ def choose_local_params_for_one_xiaoban(
     aspect_class = terrain_profile.get("aspect_class")
     slope_position_class = terrain_profile.get("slope_position_class")
 
-    # 1) 数量不足：偏补漏检
+    # 1) 数量不足：偏补漏检，但以 planner/base 参数为主，只做温和修正
     if dominant in ("count", "density") and (count_direction == "under" or density_direction == "low"):
-        if slope_class == "steep":
-            strategy = "steep_count_under"
-            params.update({
-                "diam_list": "96,192,320",
-                "tile": 1536,
-                "overlap": 512,
-                "tile_overlap": 0.45,
-                "augment": True,
-                "iou_merge_thr": 0.24,
-            })
-        elif slope_class == "moderate":
-            strategy = "moderate_count_under"
-            params.update({
-                "diam_list": "96,192,320",
-                "tile": 1536,
-                "overlap": 512,
-                "tile_overlap": 0.35,
-                "augment": True,
-                "iou_merge_thr": 0.28,
-            })
-        else:
-            strategy = "gentle_count_under"
-            params.update({
-                "diam_list": "96,160,256",
-                "tile": 1536,
-                "overlap": 512,
-                "tile_overlap": 0.35,
-                "augment": True,
-                "iou_merge_thr": 0.28,
-            })
+        strategy = f"{slope_class}_count_under" if slope_class in {"steep", "moderate", "gentle"} else "count_under"
+        params["augment"] = True
+        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.40 if slope_class == "steep" else 0.35)
+        params["overlap"] = max(int(params.get("overlap", 128)), 192)
+        params["iou_merge_thr"] = max(float(params.get("iou_merge_thr", 0.35)), 0.35)
 
         if aspect_class in {"north", "northeast", "northwest", "flat_no_aspect"}:
             params["augment"] = True
         if slope_position_class in {"ridge", "valley"}:
-            params["tile_overlap"] = max(float(params["tile_overlap"]), 0.45)
+            params["tile_overlap"] = max(float(params["tile_overlap"]), 0.40)
 
-    # 2) 数量过多：偏抑制过分裂/过检
+    # 2) 数量过多：偏抑制过分裂/过检，但不直接推回过保守模板
     elif dominant in ("count", "density") and (count_direction == "over" or density_direction == "high"):
-        if slope_class == "steep":
-            strategy = "steep_count_over"
-            params.update({
-                "diam_list": "128,256,320",
-                "tile": 2048,
-                "overlap": 512,
-                "tile_overlap": 0.25,
-                "augment": False,
-                "iou_merge_thr": 0.28,
-            })
-        else:
-            strategy = "count_over"
-            params.update({
-                "diam_list": "128,256,320",
-                "tile": 2048,
-                "overlap": 512,
-                "tile_overlap": 0.25,
-                "augment": False,
-                "iou_merge_thr": 0.28,
-            })
+        strategy = "steep_count_over" if slope_class == "steep" else "count_over"
+        params["tile_overlap"] = min(float(params.get("tile_overlap", 0.35)), 0.35)
+        params["iou_merge_thr"] = max(float(params.get("iou_merge_thr", 0.28)), 0.40 if slope_class == "steep" else 0.35)
 
-    # 3) 冠幅主导：更偏边界/冠层恢复
+    # 3) 冠幅主导：优先保留 planner 给出的多尺度窗口，只略增上下文
     elif dominant == "crown":
-        if slope_class == "steep":
-            strategy = "steep_crown_focus"
-            params.update({
-                "diam_list": "128,256,320",
-                "tile": 2048,
-                "overlap": 512,
-                "tile_overlap": 0.35,
-                "augment": False,
-                "iou_merge_thr": 0.28,
-            })
-        else:
-            strategy = "crown_focus"
-            params.update({
-                "diam_list": "128,256,320",
-                "tile": 2048,
-                "overlap": 512,
-                "tile_overlap": 0.35,
-                "augment": False,
-                "iou_merge_thr": 0.28,
-            })
+        strategy = "steep_crown_focus" if slope_class == "steep" else "crown_focus"
+        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.35 if slope_class != "steep" else 0.40)
+        params["overlap"] = max(int(params.get("overlap", 128)), 192)
+        params["iou_merge_thr"] = max(float(params.get("iou_merge_thr", 0.28)), 0.35)
 
     # 4) 覆盖/郁闭主导：优先覆盖恢复
     elif dominant == "closure":
         if cover_direction == "low":
-            if slope_class == "steep":
-                strategy = "steep_closure_low"
-                params.update({
-                    "diam_list": "96,192,320",
-                    "tile": 1536,
-                    "overlap": 512,
-                    "tile_overlap": 0.45,
-                    "augment": True,
-                    "iou_merge_thr": 0.24,
-                })
-            else:
-                strategy = "closure_low"
-                params.update({
-                    "diam_list": "96,192,320",
-                    "tile": 1536,
-                    "overlap": 512,
-                    "tile_overlap": 0.45,
-                    "augment": True,
-                    "iou_merge_thr": 0.24,
-                })
+            strategy = "steep_closure_low" if slope_class == "steep" else "closure_low"
+            params["augment"] = True
+            params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.40)
+            params["overlap"] = max(int(params.get("overlap", 128)), 192)
         else:
             strategy = "closure_high"
-            params.update({
-                "diam_list": "128,256,320",
-                "tile": 2048,
-                "overlap": 512,
-                "tile_overlap": 0.25,
-                "augment": False,
-                "iou_merge_thr": 0.28,
-            })
+            params["tile_overlap"] = min(float(params.get("tile_overlap", 0.35)), 0.35)
+            params["iou_merge_thr"] = max(float(params.get("iou_merge_thr", 0.28)), 0.35)
 
     # 5) 默认折中
     else:
-        if slope_class == "steep":
-            strategy = "steep_balanced"
-            params.update({
-                "diam_list": "96,192,320",
-                "tile": 1536,
-                "overlap": 512,
-                "tile_overlap": 0.45,
-                "augment": True,
-                "iou_merge_thr": 0.24,
-            })
-        else:
-            strategy = "balanced"
-            params.update({
-                "diam_list": "96,192,320",
-                "tile": 1536,
-                "overlap": 512,
-                "tile_overlap": 0.35,
-                "augment": True,
-                "iou_merge_thr": 0.28,
-            })
+        strategy = "steep_balanced" if slope_class == "steep" else "balanced"
+        params["augment"] = bool(params.get("augment", True))
+        params["tile_overlap"] = max(float(params.get("tile_overlap", 0.35)), 0.35 if slope_class != "steep" else 0.40)
 
     if landform_type in {"mountain_middle", "mountain_low", "hill_high"}:
-        params["iou_merge_thr"] = max(float(params["iou_merge_thr"]), 0.24)
+        params["iou_merge_thr"] = max(float(params["iou_merge_thr"]), 0.35)
 
     params, terrain_adjustments = apply_terrain_adjustments(
         params=params,
@@ -1109,16 +1078,31 @@ def _choose_local_params_for_signal_candidate(
     strategy = "balanced"
     if terrain_score >= 0.60 and max(texture_score, boundary_score) >= 0.50:
         strategy = "steep_crown_focus"
-        params.update({"diam_list": "128,256,320", "tile": 2048, "overlap": 512, "tile_overlap": 0.45, "augment": False, "iou_merge_thr": 0.28})
+        params.update({
+            "overlap": max(int(params.get("overlap", 128)), 192),
+            "tile_overlap": max(float(params.get("tile_overlap", 0.35)), 0.40),
+            "iou_merge_thr": max(float(params.get("iou_merge_thr", 0.28)), 0.35),
+        })
     elif shadow_score >= 0.60:
         strategy = "closure_low"
-        params.update({"diam_list": "96,192,320", "tile": 1536, "overlap": 512, "tile_overlap": 0.45, "augment": True, "iou_merge_thr": 0.24})
+        params.update({
+            "augment": True,
+            "overlap": max(int(params.get("overlap", 128)), 192),
+            "tile_overlap": max(float(params.get("tile_overlap", 0.35)), 0.40),
+        })
     elif max(texture_score, boundary_score) >= 0.55:
         strategy = "crown_focus"
-        params.update({"diam_list": "128,256,320", "tile": 2048, "overlap": 512, "tile_overlap": 0.35, "augment": False, "iou_merge_thr": 0.28})
+        params.update({
+            "overlap": max(int(params.get("overlap", 128)), 192),
+            "tile_overlap": max(float(params.get("tile_overlap", 0.35)), 0.35),
+            "iou_merge_thr": max(float(params.get("iou_merge_thr", 0.28)), 0.35),
+        })
     elif canopy_fraction >= 0.75:
         strategy = "dense_balanced"
-        params.update({"diam_list": "96,192,320", "tile": 1536, "overlap": 512, "tile_overlap": 0.35, "augment": True, "iou_merge_thr": 0.28})
+        params.update({
+            "augment": True,
+            "tile_overlap": max(float(params.get("tile_overlap", 0.35)), 0.35),
+        })
 
     profile = {
         "roi_signal_profile": {
@@ -1142,6 +1126,44 @@ def build_group_plan_from_roi_candidates(
         details_df = pd.read_csv(details_csv)
         if "xiaoban_id" in details_df.columns:
             details_df["xiaoban_id"] = details_df["xiaoban_id"].astype(str)
+
+    def _roi_candidate_priority(candidate: Dict[str, Any]) -> float:
+        return (
+            float(candidate.get("score") or 0.0)
+            + 0.08 * float(candidate.get("prior_overlap_ratio") or 0.0)
+            + 0.05 * float(candidate.get("boundary_score_mean") or 0.0)
+            + 0.03 * float(candidate.get("terrain_score_mean") or 0.0)
+        )
+
+    def _should_merge_same_xiaoban_groups(existing: Dict[str, Any], current: Dict[str, Any]) -> bool:
+        existing_ids = sorted(set(existing.get("prior_xiaoban_ids") or existing.get("xiaoban_ids") or []))
+        current_ids = sorted(set(current.get("prior_xiaoban_ids") or current.get("xiaoban_ids") or []))
+        if not existing_ids or existing_ids != current_ids:
+            return False
+
+        existing_wkt = str(existing.get("roi_geometry_wkt") or "").strip()
+        current_wkt = str(current.get("roi_geometry_wkt") or "").strip()
+        if not existing_wkt or not current_wkt:
+            return False
+        if existing_wkt == current_wkt:
+            return True
+
+        try:
+            existing_geom = shapely_wkt.loads(existing_wkt)
+            current_geom = shapely_wkt.loads(current_wkt)
+        except Exception:
+            return False
+        if existing_geom.is_empty or current_geom.is_empty:
+            return False
+
+        inter_area = float(existing_geom.intersection(current_geom).area)
+        if inter_area <= 0:
+            return False
+        existing_overlap = inter_area / max(float(existing_geom.area), 1.0e-6)
+        current_overlap = inter_area / max(float(current_geom.area), 1.0e-6)
+        union_area = float(existing_geom.union(current_geom).area)
+        iou = inter_area / max(union_area, 1.0e-6)
+        return max(existing_overlap, current_overlap) >= 0.75 or iou >= 0.60
 
     groups: List[Dict[str, Any]] = []
     for candidate in roi_candidates:
@@ -1169,7 +1191,45 @@ def build_group_plan_from_roi_candidates(
                 "members": [{"candidate_id": candidate_id, "profile": profile, **candidate}],
             }
         )
-    return groups
+
+    merged_groups: List[Dict[str, Any]] = []
+    for group in groups:
+        existing_idx = next((idx for idx, item in enumerate(merged_groups) if _should_merge_same_xiaoban_groups(item, group)), None)
+        if existing_idx is None:
+            merged_groups.append(group)
+            continue
+
+        existing = merged_groups[existing_idx]
+        existing_priority = _roi_candidate_priority(existing.get("roi_candidate") or {})
+        current_priority = _roi_candidate_priority(group.get("roi_candidate") or {})
+        if current_priority > existing_priority:
+            preferred = group
+            secondary = existing
+        else:
+            preferred = existing
+            secondary = group
+
+        merged_members = list(preferred.get("members") or [])
+        seen_ids = {
+            str(item.get("candidate_id") or "")
+            for item in merged_members
+            if isinstance(item, dict)
+        }
+        for item in secondary.get("members") or []:
+            candidate_id = str((item or {}).get("candidate_id") or "")
+            if candidate_id and candidate_id not in seen_ids:
+                merged_members.append(item)
+                seen_ids.add(candidate_id)
+
+        merged_group = dict(preferred)
+        merged_group["members"] = merged_members
+        merged_group["xiaoban_ids"] = sorted(set(preferred.get("xiaoban_ids") or secondary.get("xiaoban_ids") or []))
+        merged_group["prior_xiaoban_ids"] = sorted(set(preferred.get("prior_xiaoban_ids") or secondary.get("prior_xiaoban_ids") or []))
+        merged_groups[existing_idx] = merged_group
+
+    deduped_groups = list(merged_groups)
+    deduped_groups.sort(key=lambda item: len(item.get("xiaoban_ids") or []), reverse=True)
+    return deduped_groups
 
 
 # =========================
@@ -1312,6 +1372,11 @@ def run_local_refinement(
 ):
     base_cfg = load_yaml(base_config_path)
     base_params = sanitize_params(best_params)
+    base_params, preferred_child_runtime_overrides = _merge_preferred_child_base_params(
+        base_params=base_params,
+        preferred_child_model=preferred_child_model,
+        child_plan_summary=child_plan_summary,
+    )
 
     if roi_candidates:
         bad_ids = [str(item.get("candidate_id") or f"signal_roi_{idx+1:02d}") for idx, item in enumerate(roi_candidates)]
@@ -1362,6 +1427,8 @@ def run_local_refinement(
             "global_inst_shp": global_inst_shp,
             "strategy_mode": strategy_mode,
             "base_params": base_params,
+            "preferred_child_model": preferred_child_model,
+            "preferred_child_runtime_overrides": preferred_child_runtime_overrides,
             "bad_xiaoban_ids": bad_ids,
             "roi_candidates": roi_candidates or [],
             "group_plan": group_plan,
@@ -1425,6 +1492,8 @@ def run_local_refinement(
         "bad_xiaoban_ids": bad_ids,
         "roi_candidates": roi_candidates or [],
         "base_params": base_params,
+        "preferred_child_model": preferred_child_model,
+        "preferred_child_runtime_overrides": preferred_child_runtime_overrides,
         "terrain_inputs": terrain_info,
         "group_summaries": group_summaries,
         "merged_shp": final_merged_shp,

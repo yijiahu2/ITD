@@ -433,6 +433,82 @@ def _build_image_quality_analysis(data_processing_summary: dict[str, Any] | None
     }
 
 
+def _normalize_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _build_terrain_analysis(terrain_info: dict[str, Any] | None) -> dict[str, Any]:
+    info = terrain_info or {}
+    global_background = info.get("global_terrain_background") or {}
+    dom_context = info.get("dom_terrain_context") or {}
+    xiaoban_summary = info.get("xiaoban_terrain_class_summary") or info.get("terrain_class_summary") or {}
+
+    labels: list[str] = []
+    reasons: list[str] = []
+
+    global_landform = _normalize_text(global_background.get("landform_type"))
+    global_slope = _normalize_text(global_background.get("slope_class"))
+    global_aspect = _normalize_text(global_background.get("aspect_class"))
+    global_position = _normalize_text(global_background.get("slope_position_class"))
+
+    dom_landform = _normalize_text(dom_context.get("landform_type"))
+    dom_slope = _normalize_text(dom_context.get("slope_class"))
+    dom_aspect = _normalize_text(dom_context.get("aspect_class"))
+    dom_position = _normalize_text(dom_context.get("slope_position_class"))
+    dom_mean_slope = _safe_float(dom_context.get("slope_mean_deg"))
+
+    if global_landform:
+        labels.append(f"global_landform_{global_landform}")
+        reasons.append(f"全局 DEM 背景地貌为 {global_landform}。")
+    if global_position:
+        labels.append(f"global_slope_position_{global_position}")
+    if global_aspect in {"north", "northeast", "northwest"}:
+        labels.append("global_shadow_aspect_background")
+        reasons.append("全局背景存在偏阴坡特征，仅作为弱约束参与子模型排序。")
+    if global_landform in {"ridge_transition", "valley_transition"}:
+        labels.append("global_transition_background")
+        reasons.append("全局背景存在脊谷过渡带特征，仅作为弱约束参与调度。")
+
+    if dom_landform:
+        labels.append(f"dom_landform_{dom_landform}")
+        reasons.append(f"DOM 范围主地貌为 {dom_landform}。")
+    if dom_slope:
+        labels.append(f"dom_slope_{dom_slope}")
+    if dom_aspect:
+        labels.append(f"dom_aspect_{dom_aspect}")
+    if dom_position:
+        labels.append(f"dom_slope_position_{dom_position}")
+    if dom_mean_slope is not None and dom_mean_slope >= 25.0:
+        labels.append("dom_steep_surface")
+        reasons.append(f"DOM 范围平均坡度约 {dom_mean_slope:.1f}°，属于较陡坡面。")
+    elif dom_mean_slope is not None and dom_mean_slope >= 12.0:
+        labels.append("dom_moderate_slope_surface")
+    if dom_aspect in {"north", "northeast", "northwest"}:
+        labels.append("dom_shadow_aspect")
+        reasons.append("DOM 范围以阴坡方向为主，应更关注阴影干扰。")
+    if dom_landform in {"ridge_transition", "valley_transition"}:
+        labels.append("dom_ridge_valley_transition")
+        reasons.append("DOM 范围位于脊谷过渡带，局部形态变化可能影响分割稳定性。")
+    if dom_position in {"upper", "shoulder"}:
+        labels.append("dom_upper_slope")
+    elif dom_position in {"lower", "foot"}:
+        labels.append("dom_lower_slope")
+
+    return {
+        "global_background": global_background,
+        "dom_context": dom_context,
+        "xiaoban_context": xiaoban_summary,
+        "labels": list(dict.fromkeys(labels)),
+        "reasons": reasons,
+        "policy": {
+            "global_role": "weak_background_constraint",
+            "dom_role": "primary_context_for_scheduler_and_child_model_routing",
+            "roi_role": "inherit_dom_context_products",
+        },
+    }
+
+
 def assess_input_bundle(
     cfg: dict[str, Any],
     input_manifest: dict[str, Any],
@@ -483,10 +559,12 @@ def assess_input_bundle(
     scene_analysis = _build_scene_analysis(cfg)
     image_texture_analysis = _build_image_texture_analysis(data_processing_summary)
     image_quality_analysis = _build_image_quality_analysis(data_processing_summary)
+    terrain_analysis = _build_terrain_analysis(terrain_info)
     forest_type = scene_analysis.get("forest_type")
     stand_labels = ((scene_analysis.get("stand_condition") or {}).get("labels") or [])
     texture_labels = image_texture_analysis.get("labels") or []
     quality_labels = image_quality_analysis.get("labels") or []
+    terrain_labels = terrain_analysis.get("labels") or []
     if forest_type:
         strengths.append(f"已识别当前森林类型倾向为 {forest_type}。")
     else:
@@ -497,6 +575,8 @@ def assess_input_bundle(
         strengths.append(f"已提取影像纹理标签: {', '.join(str(label) for label in texture_labels)}。")
     if quality_labels:
         issues.append(f"已识别影像质量风险标签: {', '.join(str(label) for label in quality_labels)}。")
+    if terrain_labels:
+        strengths.append(f"已提取地形上下文标签: {', '.join(str(label) for label in terrain_labels[:6])}。")
 
     quality_levels = image_quality_analysis.get("levels") or {}
     if quality_levels.get("blur") in {"high", "severe"}:
@@ -517,9 +597,13 @@ def assess_input_bundle(
     for label in quality_labels:
         if label not in scene_tags:
             scene_tags.append(str(label))
+    for label in terrain_labels:
+        if label not in scene_tags:
+            scene_tags.append(str(label))
     scene_analysis["scene_tags"] = scene_tags
     scene_analysis["image_texture_analysis"] = image_texture_analysis
     scene_analysis["image_quality_analysis"] = image_quality_analysis
+    scene_analysis["terrain_analysis"] = terrain_analysis
     readiness_score = max(0.2, 1.0 - 0.10 * len(issues)) if issues else 1.0
 
     payload = InputAssessment(
@@ -535,6 +619,14 @@ def assess_input_bundle(
             "aspect_tif": terrain_info.get("aspect_tif"),
             "landform_tif": terrain_info.get("landform_tif"),
             "slope_position_tif": terrain_info.get("slope_position_tif"),
+            "global_dem_tif": terrain_info.get("global_dem_tif"),
+            "global_slope_tif": terrain_info.get("global_slope_tif"),
+            "global_aspect_tif": terrain_info.get("global_aspect_tif"),
+            "global_landform_tif": terrain_info.get("global_landform_tif"),
+            "global_slope_position_tif": terrain_info.get("global_slope_position_tif"),
+            "global_terrain_background": terrain_info.get("global_terrain_background") or {},
+            "dom_terrain_context": terrain_info.get("dom_terrain_context") or {},
+            "terrain_layer_policy": terrain_info.get("terrain_layer_policy") or {},
         },
         data_processing_summary=data_processing_summary or {},
     )

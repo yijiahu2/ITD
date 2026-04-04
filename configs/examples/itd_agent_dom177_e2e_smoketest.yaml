@@ -64,6 +64,11 @@ ITD_agent:
     adaptive_generation:
       enabled: true
       use_llm: false
+      parameter_search:
+        enabled: true
+        max_candidates: 3
+        max_pilots: 2
+        pilot_window_px: 1024
     roi_extraction:
       enabled: true
       use_llm: true
@@ -92,14 +97,20 @@ ITD_agent:
       script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
     child_models:
       - name: dense_canopy_template
-        template_profile: true
-        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向密闭林冠、粘连严重 ROI 的子模型模板。
+        algorithm: mmdet_htc
+        description: 面向密闭林冠、粘连严重 ROI 的 HTC 专家模型。
         scene_tags: [dense_mixed, dense_forest]
         terrain_tags: [gentle, moderate, hill_middle]
         failure_categories: [dense_canopy_adhesion, count_underestimate, crown_overlap_conflict]
         target_error_patterns: [count_under, crown, closure_low]
         routing_priority: 60
+        algorithm_cfg:
+          tile_size: 1536
+          tile_overlap: 256
+          tile_batch_size: 1
+          merge_iou_thr: 0.35
+          score_thr: 0.18
+          min_area_px: 60
         runtime_overrides:
           diam_list: "128"
           tile: 1792
@@ -109,14 +120,20 @@ ITD_agent:
           augment: false
           iou_merge_thr: 0.24
       - name: steep_slope_template
-        template_profile: true
-        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向陡坡和高起伏地形 ROI 的子模型模板。
+        algorithm: mmdet_htc
+        description: 面向陡坡和高起伏地形 ROI 的 HTC 专家模型。
         scene_tags: [dense_mixed, mountain, hill]
         terrain_tags: [steep, ridge, valley, mountain_middle, mountain_low, hill_high]
         failure_categories: [terrain_shadow_confused, count_underestimate]
         target_error_patterns: [count_under, closure_low, density_low]
         routing_priority: 70
+        algorithm_cfg:
+          tile_size: 1280
+          tile_overlap: 320
+          tile_batch_size: 1
+          merge_iou_thr: 0.40
+          score_thr: 0.16
+          min_area_px: 60
         runtime_overrides:
           diam_list: "160"
           tile: 1792
@@ -126,14 +143,20 @@ ITD_agent:
           augment: false
           iou_merge_thr: 0.22
       - name: north_shade_template
-        template_profile: true
-        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向阴坡阴影和闭合度恢复 ROI 的子模型模板。
+        algorithm: mmdet_htc
+        description: 面向阴坡阴影和闭合度恢复 ROI 的 HTC 专家模型。
         scene_tags: [dense_mixed, shadow]
         terrain_tags: [north, northeast, northwest, shadow, north_shade]
         failure_categories: [terrain_shadow_confused, crown_boundary_fragmented]
         target_error_patterns: [closure_low, count_under, crown]
         routing_priority: 75
+        algorithm_cfg:
+          tile_size: 1280
+          tile_overlap: 320
+          tile_batch_size: 1
+          merge_iou_thr: 0.35
+          score_thr: 0.14
+          min_area_px: 50
         runtime_overrides:
           diam_list: "160"
           tile: 1792
@@ -143,14 +166,20 @@ ITD_agent:
           augment: false
           iou_merge_thr: 0.22
       - name: large_crown_template
-        template_profile: true
-        script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向稀疏大冠幅和过分裂 ROI 的子模型模板。
+        algorithm: mmdet_cascade_mask_rcnn
+        description: 面向稀疏大冠幅和过分裂 ROI 的 Cascade 专家模型。
         scene_tags: [sparse, open_forest]
         terrain_tags: [gentle, moderate]
         failure_categories: [count_overestimate, crown_boundary_fragmented]
         target_error_patterns: [count_over, crown, closure_high]
         routing_priority: 55
+        algorithm_cfg:
+          tile_size: 1792
+          tile_overlap: 192
+          tile_batch_size: 1
+          merge_iou_thr: 0.50
+          score_thr: 0.28
+          min_area_px: 120
         runtime_overrides:
           diam_list: "224"
           tile: 1792

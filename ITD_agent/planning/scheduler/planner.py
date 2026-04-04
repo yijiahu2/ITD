@@ -101,6 +101,7 @@ def extract_plan_summary(plan: dict[str, Any]) -> dict[str, Any]:
         "parameter_updates": plan.get("parameter_updates"),
         "scheduler_context": plan.get("scheduler_context"),
         "llm_gateway_result": plan.get("llm_gateway_result"),
+        "pilot_search_result": plan.get("pilot_search_result"),
         "runtime_plan": plan.get("runtime_plan"),
         "roi_refine_plan": roi_plan,
         "roi_extraction_plan": roi_plan,

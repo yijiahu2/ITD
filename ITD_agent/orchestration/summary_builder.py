@@ -75,6 +75,7 @@ def build_run_summary(
             "main_model_planning_used_llm": main_plan.get("llm_result") is not None,
             "main_model_planning_result": main_plan.get("llm_result"),
             "main_model_gateway_trace": main_plan.get("llm_gateway_result"),
+            "main_model_pilot_parameter_search": main_plan.get("pilot_search_result"),
             "roi_decision": final_roi_decision,
             "roi_decision_gateway_trace": final_roi_decision.get("llm_gateway_result") if isinstance(final_roi_decision, dict) else None,
             "roi_round_llm_results": [

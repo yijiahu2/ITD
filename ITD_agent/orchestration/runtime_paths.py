@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ITD_agent.data_processing.inventory.normalizer import prepare_spatial_context
 from ITD_agent.data_processing.terrain.dem_pipeline import generate_terrain_products
 
 
@@ -40,6 +41,7 @@ def prepare_terrain_inputs_from_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     dem_tif = cfg.get("dem_tif")
     slope_tif = cfg.get("slope_tif")
     aspect_tif = cfg.get("aspect_tif")
+    input_image = cfg.get("input_image")
 
     result = {
         "dem_tif": dem_tif,
@@ -47,6 +49,16 @@ def prepare_terrain_inputs_from_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
         "aspect_tif": aspect_tif,
         "landform_tif": cfg.get("landform_tif"),
         "slope_position_tif": cfg.get("slope_position_tif"),
+        "global_dem_tif": dem_tif,
+        "global_slope_tif": slope_tif,
+        "global_aspect_tif": aspect_tif,
+        "global_landform_tif": cfg.get("landform_tif"),
+        "global_slope_position_tif": cfg.get("slope_position_tif"),
+        "terrain_layer_policy": {
+            "global_role": "whole_dem_background_for_llm_scheduler_only",
+            "dom_role": "dom_extent_recomputed_primary_context",
+            "roi_role": "inherit_dom_context_products",
+        },
         "terrain_generated": False,
     }
     if not dem_tif:
@@ -59,6 +71,32 @@ def prepare_terrain_inputs_from_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
         terrain_dir = Path(cfg["output_dir"]).resolve() / "terrain_cache"
     terrain_dir.mkdir(parents=True, exist_ok=True)
 
+    if input_image:
+        try:
+            context_dir = terrain_dir / "dom_context"
+            context_result = prepare_spatial_context(
+                dom_tif=input_image,
+                dem_tif=dem_tif,
+                xiaoban_shp=cfg.get("xiaoban_shp"),
+                out_dir=context_dir,
+                xiaoban_id_field=cfg.get("xiaoban_id_field"),
+                tree_count_field=cfg.get("tree_count_field"),
+                crown_field=cfg.get("crown_field"),
+                closure_field=cfg.get("closure_field"),
+                area_ha_field=cfg.get("area_ha_field"),
+                density_field=cfg.get("density_field"),
+                flat_slope_threshold_deg=float(cfg.get("flat_slope_threshold_deg", 5.0)),
+                plain_relief_threshold_m=float(cfg.get("plain_relief_threshold_m", 30.0)),
+            )
+            context_result["terrain_generated"] = bool(
+                context_result.get("global_slope_tif")
+                or context_result.get("slope_tif")
+            )
+            return context_result
+        except Exception:
+            # Fall back to the legacy global-only terrain preparation path.
+            pass
+
     auto_slope = terrain_dir / f"{Path(dem_tif).stem}_slope.tif"
     auto_aspect = terrain_dir / f"{Path(dem_tif).stem}_aspect.tif"
     auto_landform = terrain_dir / f"{Path(dem_tif).stem}_landform.tif"
@@ -69,6 +107,10 @@ def prepare_terrain_inputs_from_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
         result["aspect_tif"] = str(auto_aspect)
         result["landform_tif"] = str(auto_landform)
         result["slope_position_tif"] = str(auto_slope_position)
+        result["global_slope_tif"] = str(auto_slope)
+        result["global_aspect_tif"] = str(auto_aspect)
+        result["global_landform_tif"] = str(auto_landform)
+        result["global_slope_position_tif"] = str(auto_slope_position)
         return result
 
     generate_terrain_products(
@@ -84,6 +126,10 @@ def prepare_terrain_inputs_from_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     result["aspect_tif"] = str(auto_aspect)
     result["landform_tif"] = str(auto_landform)
     result["slope_position_tif"] = str(auto_slope_position)
+    result["global_slope_tif"] = str(auto_slope)
+    result["global_aspect_tif"] = str(auto_aspect)
+    result["global_landform_tif"] = str(auto_landform)
+    result["global_slope_position_tif"] = str(auto_slope_position)
     result["terrain_generated"] = True
     return result
 

@@ -35,6 +35,15 @@ def _round_to_step(value: float, *, step: int, min_value: int, max_value: int) -
     return max(min_value, min(max_value, rounded))
 
 
+def _normalize_diam_triplet(values: list[int]) -> str:
+    normalized: list[int] = []
+    for value in values:
+        value = int(value)
+        if value not in normalized:
+            normalized.append(value)
+    return ",".join(str(item) for item in normalized)
+
+
 def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, Any]) -> dict[str, Any]:
     input_assessment = runtime_cfg.get("_input_assessment") or {}
     scene_analysis = input_assessment.get("scene_analysis") or {}
@@ -42,6 +51,10 @@ def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, A
     inventory_stats = scene_analysis.get("inventory_scene_stats") or {}
     texture = (scene_analysis.get("image_texture_analysis") or {})
     quality = (scene_analysis.get("image_quality_analysis") or {})
+    terrain_analysis = (scene_analysis.get("terrain_analysis") or {})
+    global_terrain = terrain_analysis.get("global_background") or {}
+    dom_terrain = terrain_analysis.get("dom_context") or {}
+    terrain_labels = set(terrain_analysis.get("labels") or [])
     texture_levels = texture.get("levels") or {}
     texture_labels = set(texture.get("labels") or [])
     quality_levels = quality.get("levels") or {}
@@ -65,6 +78,7 @@ def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, A
         *(stand_condition.get("labels") or []),
         *texture_labels,
         *quality_labels,
+        *terrain_labels,
     ]:
         if value:
             scene_tags.add(str(value))
@@ -74,10 +88,17 @@ def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, A
     closed_canopy = stand_condition.get("closure_level") == "high" or "closed_canopy" in scene_tags
     high_density = stand_condition.get("density_level") == "high" or "high_density" in scene_tags
     blur_high = quality_levels.get("blur") in {"high", "severe"} or "blur_high" in quality_labels
-    heavy_shadow = quality_levels.get("shadow") in {"moderate", "heavy"} or any(label in quality_labels for label in {"shadow_heavy", "shadow_moderate"})
+    shadow_level = str(quality_levels.get("shadow") or "").lower()
+    shadow_present = shadow_level in {"moderate", "heavy"} or any(label in quality_labels for label in {"shadow_heavy", "shadow_moderate"})
+    heavy_shadow = shadow_level == "heavy" or "shadow_heavy" in quality_labels
     stripe_noise = quality_levels.get("stripe_noise") in {"medium", "high"} or "stripe_noise" in quality_labels
     exposure_risk = quality_levels.get("exposure") in {"high", "severe"} or bool({"overexposed", "underexposed"} & quality_labels)
     color_cast = quality_levels.get("color_cast") in {"medium", "high"} or "color_cast" in quality_labels
+    dom_steep = "dom_steep_surface" in terrain_labels or (_safe_float(dom_terrain.get("slope_mean_deg")) or 0.0) >= 25.0
+    dom_shadow_aspect = "dom_shadow_aspect" in terrain_labels
+    dom_transition = "dom_ridge_valley_transition" in terrain_labels
+    dom_upper_slope = "dom_upper_slope" in terrain_labels
+    global_shadow_background = "global_shadow_aspect_background" in terrain_labels
 
     crown_width_px = None
     if crown_width_m is not None and resolution_m and resolution_m > 0:
@@ -86,16 +107,24 @@ def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, A
     reasons: list[str] = []
     parameter_updates: dict[str, Any] = {}
 
+    high_res_closed_complex_scene = bool(
+        max_dim >= 3500
+        and crown_width_px is not None
+        and crown_width_px >= 180
+        and closed_canopy
+        and (high_complexity or strong_edge)
+    )
+
     if crown_width_px is not None:
-        d_small = _round_to_step(crown_width_px * 0.70, step=32, min_value=96, max_value=224)
-        d_mid = _round_to_step(crown_width_px * 1.10, step=32, min_value=160, max_value=320)
-        d_large = _round_to_step(crown_width_px * 1.65, step=32, min_value=224, max_value=384)
+        d_small = _round_to_step(crown_width_px * 0.75, step=32, min_value=96, max_value=224)
+        d_mid = _round_to_step(crown_width_px * 1.25, step=32, min_value=160, max_value=320)
+        d_large = _round_to_step(crown_width_px * 1.85, step=32, min_value=224, max_value=384)
         diameters = []
         for value in [d_small, d_mid, d_large]:
             if value not in diameters:
                 diameters.append(value)
         if len(diameters) >= 2:
-            parameter_updates["diam_list"] = ",".join(str(x) for x in diameters)
+            parameter_updates["diam_list"] = _normalize_diam_triplet(diameters)
             reasons.append(
                 f"根据平均冠幅 {crown_width_m:.2f} m 和分辨率 {resolution_m:.4f} m/px，估算平均树冠尺度约 {crown_width_px:.0f} px，"
                 f"建议采用多尺度直径 {parameter_updates['diam_list']}。"
@@ -120,24 +149,49 @@ def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, A
     elif high_density or high_complexity:
         parameter_updates["iou_merge_thr"] = 0.35
 
+    if high_res_closed_complex_scene:
+        parameter_updates["diam_list"] = "160,256,384"
+        parameter_updates["tile"] = 2048
+        parameter_updates["overlap"] = 128
+        parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.35)
+        parameter_updates["augment"] = True
+        parameter_updates["iou_merge_thr"] = 0.50
+        reasons.append("高分辨率闭冠复杂场景优先采用实测更稳的大窗多尺度配置，避免过度保守导致欠分割。")
+
     if blur_high:
         parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.40)
         parameter_updates["augment"] = True
         parameter_updates["overlap"] = max(int(parameter_updates.get("overlap", 128)), 192)
         reasons.append("影像模糊较重，建议提高滑窗重叠并开启 augment 以降低边界不稳定影响。")
-    if heavy_shadow:
-        parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.40)
+    if shadow_present:
+        parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.35)
         parameter_updates["augment"] = True
-        parameter_updates["iou_merge_thr"] = max(float(parameter_updates.get("iou_merge_thr", 0.35)), 0.35)
-        reasons.append("阴影占比较高，建议提高上下文重叠并保持较稳健的实例合并阈值。")
+        if heavy_shadow:
+            parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.40)
+            parameter_updates["overlap"] = max(int(parameter_updates.get("overlap", 128)), 192)
+        reasons.append("阴影存在时优先保持大窗和多尺度配置，仅温和提高重叠与增强来补偿阴影影响。")
     if stripe_noise:
-        parameter_updates["tile"] = min(int(parameter_updates.get("tile", 2048)), 1792)
-        parameter_updates["overlap"] = max(int(parameter_updates.get("overlap", 128)), 256)
-        parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.40)
-        reasons.append("存在条带噪声时，建议适当减小 tile、增大 overlap，降低方向性伪影影响。")
+        parameter_updates["augment"] = True
+        parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.35)
+        if not high_res_closed_complex_scene and (blur_high or heavy_shadow):
+            parameter_updates["overlap"] = max(int(parameter_updates.get("overlap", 128)), 192)
+        reasons.append("条带噪声优先通过增强和适度上下文补偿处理，避免直接缩小 tile 导致整体欠分割。")
     if exposure_risk or color_cast:
         parameter_updates["augment"] = True
         reasons.append("曝光异常或色偏会削弱颜色稳定性，建议开启 augment 提高鲁棒性。")
+    if dom_steep or dom_transition:
+        parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.40)
+        parameter_updates["overlap"] = max(int(parameter_updates.get("overlap", 128)), 192)
+        reasons.append("DOM 范围处于陡坡或脊谷过渡带时，优先提高滑窗上下文重叠，降低地形驱动的边界不稳定。")
+    if dom_shadow_aspect:
+        parameter_updates["augment"] = True
+        parameter_updates["tile_overlap"] = max(float(parameter_updates.get("tile_overlap", 0.35)), 0.40)
+        reasons.append("DOM 范围以阴坡为主，作为主决策依据提高阴影鲁棒性。")
+    if dom_upper_slope and high_density:
+        parameter_updates["iou_merge_thr"] = max(float(parameter_updates.get("iou_merge_thr", 0.35)), 0.40)
+        reasons.append("DOM 范围位于上坡位且林分密度较高，应适当提高实例合并阈值，减少破碎冠幅。")
+    if global_shadow_background and not dom_shadow_aspect:
+        reasons.append("全局 DEM 背景存在阴坡特征，但当前仅作为弱约束参与子模型排序，不直接主导主模型参数。")
 
     if density_mean is not None and density_mean >= 450:
         reasons.append(f"小班先验平均密度约 {density_mean:.1f} 株/公顷，属于中高密度林分。")
@@ -167,6 +221,9 @@ def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, A
             "scene_tags": sorted(scene_tags),
             "texture_levels": texture_levels,
             "quality_levels": quality_levels,
+            "global_terrain_background": global_terrain,
+            "dom_terrain_context": dom_terrain,
+            "terrain_labels": sorted(terrain_labels),
         },
         "confidence": confidence,
         "reasons": reasons,
@@ -219,6 +276,9 @@ def build_scheduler_context(
         "input_assessment": runtime_cfg.get("_input_assessment") or {},
         "image_texture_analysis": ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("image_texture_analysis") or {},
         "image_quality_analysis": ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("image_quality_analysis") or {},
+        "terrain_analysis": ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {},
+        "global_terrain_background": ((((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {}).get("global_background") or {}),
+        "dom_terrain_context": ((((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {}).get("dom_context") or {}),
         "data_processing_summary": runtime_cfg.get("_data_processing_summary") or {},
         "roi_assessment": runtime_cfg.get("_roi_assessment") or {},
         "previous_round_summary": runtime_cfg.get("_previous_round_summary") or {},

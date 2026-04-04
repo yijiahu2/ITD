@@ -590,6 +590,8 @@ def prepare_roi_refinement_inputs(
         "roi_xiaoban_ids_in_output": output_ids,
         "buffer_m": float(buffer_m),
         "roi_source": "signal_driven_geometry" if roi_geometry_wkt else "inventory_buffer",
+        "terrain_source": "dom_context_inherited",
+        "terrain_layer_policy": terrain_info.get("terrain_layer_policy") or {},
         "roi_cache_root": str(roi_cache_root),
         "roi_extent_gpkg": str(roi_geom_path),
         "roi_image_tif": roi_image,

@@ -103,6 +103,11 @@ def copy_optional_file(src: str | Path | None, dst: str | Path | None) -> str | 
     if not src_path.exists():
         return None
     dst_path = Path(dst)
+    try:
+        if src_path.resolve() == dst_path.resolve():
+            return str(dst_path)
+    except Exception:
+        pass
     ensure_parent(dst_path)
     shutil.copy2(src_path, dst_path)
     return str(dst_path)

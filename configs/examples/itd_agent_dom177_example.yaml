@@ -64,6 +64,11 @@ ITD_agent:
     adaptive_generation:
       enabled: true
       use_llm: true
+      parameter_search:
+        enabled: true
+        max_candidates: 3
+        max_pilots: 2
+        pilot_window_px: 1024
     roi_extraction:
       enabled: true
       use_llm: true

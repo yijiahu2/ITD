@@ -51,6 +51,7 @@ class LLMGatewayResponse:
     parsed_result: dict[str, Any] | None = None
     raw_text: str | None = None
     system_prompt: str | None = None
+    prompt_chars: int | None = None
     error: str | None = None
     fallback_used: bool = False
 
@@ -212,6 +213,7 @@ def _invoke_json_task(
     model: str | None = None,
     use_llm: bool = True,
 ) -> dict[str, Any]:
+    prompt_chars = len(prompt or "")
     cfg = resolve_gateway_config(
         runtime_cfg=runtime_cfg,
         provider=provider,
@@ -224,6 +226,7 @@ def _invoke_json_task(
             provider=cfg.provider,
             model=cfg.model,
             system_prompt=system_prompt,
+            prompt_chars=prompt_chars,
         ).to_dict()
     if not gateway_available(cfg):
         return LLMGatewayResponse(
@@ -232,6 +235,7 @@ def _invoke_json_task(
             provider=cfg.provider,
             model=cfg.model,
             system_prompt=system_prompt,
+            prompt_chars=prompt_chars,
             error="LLM gateway is not configured or disabled.",
         ).to_dict()
     try:
@@ -243,6 +247,7 @@ def _invoke_json_task(
             model=cfg.model,
             parsed_result=parsed,
             system_prompt=system_prompt,
+            prompt_chars=prompt_chars,
         ).to_dict()
     except Exception as exc:
         return LLMGatewayResponse(
@@ -251,6 +256,7 @@ def _invoke_json_task(
             provider=cfg.provider,
             model=cfg.model,
             system_prompt=system_prompt,
+            prompt_chars=prompt_chars,
             error=str(exc),
         ).to_dict()
 

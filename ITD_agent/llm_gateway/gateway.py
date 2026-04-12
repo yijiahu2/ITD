@@ -74,15 +74,15 @@ def _strip_wrapping_quotes(value: str) -> str:
     return text
 
 
+def _env_value(key: str) -> str | None:
+    value = os.environ.get(key)
+    if value:
+        return _strip_wrapping_quotes(value)
+    return None
+
+
 @lru_cache(maxsize=1)
 def _load_bashrc_exports() -> dict[str, str]:
-    """
-    Fallback reader for ~/.bashrc exports.
-
-    The runtime often uses non-interactive shells, so `.bashrc` can early-return
-    before the export lines execute. Reading the file directly lets the gateway
-    recover user-configured ARK_* values without depending on shell startup mode.
-    """
     path = Path("~/.bashrc").expanduser()
     if not path.exists():
         return {}
@@ -103,18 +103,11 @@ def _load_bashrc_exports() -> dict[str, str]:
     return exports
 
 
-def _env_or_bashrc(key: str) -> str | None:
-    value = os.environ.get(key)
-    if value:
-        return value
-    return _load_bashrc_exports().get(key)
-
-
 def _bashrc_or_env(key: str) -> str | None:
     value = _load_bashrc_exports().get(key)
     if value:
         return value
-    return os.environ.get(key)
+    return _env_value(key)
 
 
 def resolve_gateway_config(

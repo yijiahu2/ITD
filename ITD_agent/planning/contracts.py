@@ -49,7 +49,9 @@ class ROIRefinePlan:
     top_k: int
     buffer_m: float
     strategy_mode: str
+    preferred_expert_family: str | None = None
     preferred_child_model: str | None = None
+    candidate_expert_families: list[str] = field(default_factory=list)
     candidate_child_models: list[str] = field(default_factory=list)
     selection_rules: list[str] = field(default_factory=list)
     stop_rules: list[str] = field(default_factory=list)
@@ -63,7 +65,9 @@ class ChildModelCallPlan:
     enabled: bool
     planning_stage: str
     routing_mode: str
+    preferred_expert_family: str | None = None
     preferred_child_model: str | None = None
+    candidate_expert_families: list[str] = field(default_factory=list)
     candidate_models: list[str] = field(default_factory=list)
     routing_rules: list[str] = field(default_factory=list)
     escalation_rules: list[str] = field(default_factory=list)
@@ -91,6 +95,9 @@ class FinetuneTrainingPlan:
     should_prepare: bool
     target_module: str
     trigger_mode: str
+    target_model_role: str = "main_model"
+    target_expert_family: str | None = None
+    segmentation_algorithm: str | None = None
     template_config_path: str | None = None
     generated_config_path: str | None = None
     train_mode: str = "head_only"
@@ -104,6 +111,7 @@ class FinetuneTrainingPlan:
     supervision_mode: str = "hybrid"
     dataset_bundle_path: str | None = None
     dataset_selection_summary: dict[str, Any] = field(default_factory=dict)
+    expert_training_strategy: dict[str, Any] = field(default_factory=dict)
     config_overrides: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
 

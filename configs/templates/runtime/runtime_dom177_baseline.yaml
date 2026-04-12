@@ -55,6 +55,29 @@ ITD_agent:
       min_problem_cases: 1
       buffer_m: 5.0
       strategy_mode: auto
+      signal_support_quantile: 0.80
+      signal_candidate_max_keep: 8
+      signal_dynamic_min_area_floor_ratio: 0.70
+      signal_dynamic_min_area_cap_m2: 450.0
+      signal_same_type_merge_distance_m: 8.0
+      signal_same_type_merge_distance_floor_m: 4.0
+      signal_same_type_merge_distance_cap_m: 14.0
+    child_model_routing:
+      family_score_scale: 100.0
+      model_score_scale: 100.0
+      family_weights:
+        failure_categories: 0.34
+        error_patterns: 0.24
+        terrain_tags: 0.18
+        forest_tags: 0.12
+        scene_tags: 0.06
+        roi_signal_tags: 0.06
+      model_weights:
+        failure_categories: 0.40
+        error_patterns: 0.25
+        terrain_tags: 0.15
+        scene_tags: 0.10
+        roi_signal_tags: 0.10
   segmentation_models:
     main_model:
       name: legacy_cellpose_sam

@@ -4,9 +4,17 @@ import json
 import shlex
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from tools.process_runner import run_streaming
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SAFE_DELETE_ROOTS = (
+    PROJECT_ROOT / "outputs",
+    Path("/tmp/itd_agent_runtime"),
+    Path("/tmp/itd_agent_data_processing"),
+)
 
 
 def ensure_parent(path: str | Path) -> None:
@@ -29,25 +37,103 @@ def load_json(path: str | Path) -> dict[str, Any]:
         return json.load(f)
 
 
-def remove_path(path: str | Path) -> bool:
+def _dedupe_resolved_paths(paths: Sequence[str | Path]) -> tuple[Path, ...]:
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for raw_path in paths:
+        if raw_path in (None, ""):
+            continue
+        resolved = Path(raw_path).expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(resolved)
+    return tuple(deduped)
+
+
+def _is_within_root(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def build_cleanup_roots(
+    runtime_cfg: dict[str, Any] | None = None,
+    *,
+    extra_roots: Sequence[str | Path] | None = None,
+) -> tuple[Path, ...]:
+    candidates: list[str | Path] = list(DEFAULT_SAFE_DELETE_ROOTS)
+    if isinstance(runtime_cfg, dict):
+        output_dir = runtime_cfg.get("output_dir")
+        if output_dir:
+            candidates.append(output_dir)
+        persistent_output_dir = runtime_cfg.get("persistent_output_dir")
+        if persistent_output_dir:
+            candidates.append(persistent_output_dir)
+        for key in ("metrics_json", "details_csv"):
+            value = runtime_cfg.get(key)
+            if value:
+                candidates.append(Path(value).expanduser().parent)
+    if extra_roots:
+        candidates.extend(extra_roots)
+    return _dedupe_resolved_paths(candidates)
+
+
+def _validate_cleanup_target(
+    path: str | Path,
+    allowed_roots: Sequence[str | Path] | None = None,
+) -> tuple[Path, tuple[Path, ...]]:
+    target = Path(path).expanduser().resolve()
+    roots = _dedupe_resolved_paths(allowed_roots or DEFAULT_SAFE_DELETE_ROOTS)
+    if not roots:
+        raise ValueError("No allowed cleanup roots configured.")
+    if any(_is_within_root(target, root) for root in roots):
+        return target, roots
+    allowed = ", ".join(str(root) for root in roots)
+    raise ValueError(f"Refusing to delete path outside allowed roots: {target} (allowed: {allowed})")
+
+
+def remove_path(
+    path: str | Path,
+    *,
+    allowed_roots: Sequence[str | Path] | None = None,
+) -> bool:
     p = Path(path)
     if not p.exists():
         return False
-    if p.is_dir():
+    _validate_cleanup_target(p, allowed_roots=allowed_roots)
+    if p.is_symlink():
+        p.unlink()
+    elif p.is_dir():
         shutil.rmtree(p)
     else:
         p.unlink()
     return True
 
 
-def remove_vector_dataset(path: str | Path) -> list[str]:
+def remove_vector_dataset(
+    path: str | Path,
+    *,
+    allowed_roots: Sequence[str | Path] | None = None,
+) -> list[str]:
     p = Path(path)
     removed: list[str] = []
-    for ext in [".shp", ".shx", ".dbf", ".prj", ".cpg", ".qix"]:
-        cand = p.with_suffix(ext)
-        if cand.exists():
+    candidates: list[Path]
+    if p.suffix.lower() == ".shp":
+        candidates = [p.with_suffix(ext) for ext in [".shp", ".shx", ".dbf", ".prj", ".cpg", ".qix"]]
+    else:
+        candidates = [p]
+    for cand in candidates:
+        if not cand.exists():
+            continue
+        _validate_cleanup_target(cand, allowed_roots=allowed_roots)
+        if cand.is_symlink() or cand.is_file():
             cand.unlink()
-            removed.append(str(cand))
+        else:
+            shutil.rmtree(cand)
+        removed.append(str(cand))
     return removed
 
 

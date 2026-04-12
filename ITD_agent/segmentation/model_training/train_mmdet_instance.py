@@ -3,19 +3,20 @@ from __future__ import annotations
 import argparse
 import math
 import pprint
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from ITD_agent.segmentation.finetuning.io_utils import dump_json, ensure_dir, load_json, load_yaml, to_bool
+from ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset import _sanitize_payload
+from ITD_agent.segmentation.model_training.expert_injection import build_training_injection_manifest
 from ITD_agent.segmentation.model_registry.common import resolve_algorithm_cfg
 from ITD_agent.segmentation.model_registry.mmdet_specs import MMDetAlgorithmSpec, get_mmdet_algorithm_spec, list_mmdet_algorithm_names
 
 
 SUPPORTED_ALGORITHMS = set(list_mmdet_algorithm_names())
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _algorithm_defaults(algorithm_name: str) -> dict[str, Any]:
@@ -86,6 +87,40 @@ def _find_best_ckpt(search_root: Path) -> Path | None:
     return sorted(candidates, key=score, reverse=True)[0]
 
 
+def _materialize_sanitized_annotation_files(
+    *,
+    training_dir: Path,
+    train_json: Path,
+    val_json: Path,
+    test_json: Path,
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    sanitized_dir = ensure_dir(training_dir / "sanitized_annotations")
+    role_to_source = {
+        "train": train_json,
+        "val": val_json,
+        "test": test_json,
+    }
+    role_to_output: dict[str, Path] = {}
+    sanitize_summary: dict[str, Any] = {}
+
+    for role, src_path in role_to_source.items():
+        payload = load_json(src_path)
+        sanitized_payload, stats = _sanitize_payload(
+            payload,
+            drop_images_without_annotations=(role != "test"),
+        )
+        out_path = sanitized_dir / src_path.name
+        dump_json(sanitized_payload, out_path)
+        role_to_output[role] = out_path
+        sanitize_summary[role] = {
+            "source_annotation_file": str(src_path),
+            "sanitized_annotation_file": str(out_path),
+            **stats,
+        }
+
+    return role_to_output, sanitize_summary
+
+
 def _ensure_public_dataset(args_config: str, cfg: dict[str, Any]) -> tuple[Path, Path]:
     dataset_dir = Path(cfg["output_dir"]) / cfg.get("segmentation_dataset_dirname", "external_segmentation_dataset")
     summary_path = dataset_dir / "prepare_summary.json"
@@ -95,18 +130,19 @@ def _ensure_public_dataset(args_config: str, cfg: dict[str, Any]) -> tuple[Path,
         return dataset_dir, summary_path
 
     if dataset_dir.exists() and force_rebuild:
-        print(f"[INFO] removing existing segmentation dataset dir: {dataset_dir}")
-        shutil.rmtree(dataset_dir)
+        # Rebuild in place so reruns do not depend on deleting large output trees first.
+        print(f"[INFO] rebuilding segmentation dataset in place: {dataset_dir}", flush=True)
 
     cmd = [
         sys.executable,
+        "-u",
         "-m",
         "ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset",
         "--config",
         args_config,
     ]
-    print("[RUN segmentation dataset prepare]")
-    print(" ".join(cmd))
+    print("[RUN segmentation dataset prepare]", flush=True)
+    print(" ".join(cmd), flush=True)
     result = subprocess.run(cmd)
     if result.returncode != 0:
         raise RuntimeError("ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset failed")
@@ -143,6 +179,24 @@ def _default_weight_decay(spec: MMDetAlgorithmSpec) -> float:
     if spec.train_loop_style in {"iter_adamw", "epoch_adamw"}:
         return 0.05
     return 1.0e-4
+
+
+def _wrap_train_dataset_cfg(base_cfg: dict[str, Any], injection_manifest: dict[str, Any]) -> dict[str, Any]:
+    wrapper = dict(injection_manifest.get("dataset_wrapper") or {})
+    wrapper_type = str(wrapper.get("type") or "").strip()
+    if wrapper_type == "RepeatDataset":
+        return {
+            "type": "RepeatDataset",
+            "times": int(wrapper.get("times") or 1),
+            "dataset": base_cfg,
+        }
+    if wrapper_type == "ClassBalancedDataset":
+        return {
+            "type": "ClassBalancedDataset",
+            "oversample_thr": float(wrapper.get("oversample_thr") or 0.001),
+            "dataset": base_cfg,
+        }
+    return base_cfg
 
 
 def _generic_instance_pipelines() -> tuple[str, str]:
@@ -184,7 +238,7 @@ def _mask2former_instance_pipelines() -> tuple[str, str]:
         crop_type='absolute',
         recompute_bbox=True,
         allow_negative_crop=True),
-    dict(type='FilterAnnotations', min_gt_bbox_wh=(1e-5, 1e-5), by_mask=True),
+    dict(type='FilterAnnotations', min_gt_bbox_wh=(1.0, 1.0), by_mask=True),
     dict(type='PackDetInputs'),
 ]""",
         """[
@@ -380,6 +434,7 @@ def _write_generated_config(
     use_amp: bool,
     pin_memory: bool,
     prefetch_factor: int | None,
+    injection_manifest: dict[str, Any],
 ) -> None:
     train_pipeline, test_pipeline = _pipeline_strings(spec)
     model_update = _model_update_code(spec, num_classes)
@@ -397,12 +452,30 @@ def _write_generated_config(
     prefetch_line = f"    prefetch_factor={prefetch_factor},\n" if prefetch_factor and num_workers > 0 else ""
     checkpoint_by_epoch = spec.train_loop_style != "iter_adamw"
     checkpoint_interval = "1" if checkpoint_by_epoch else "max(1, train_cfg['val_interval'])"
+    base_train_dataset_cfg = {
+        "type": "CocoDataset",
+        "data_root": str(dataset_root.resolve()) + "/",
+        "ann_file": str(train_json.resolve()),
+        "data_prefix": {"img": ""},
+        "metainfo": {"classes": list(class_names)},
+        "filter_cfg": {"filter_empty_gt": True, "min_size": 1},
+        "pipeline": "__TRAIN_PIPELINE__",
+        "backend_args": "__BACKEND_ARGS__",
+    }
+    wrapped_train_dataset_cfg = _wrap_train_dataset_cfg(base_train_dataset_cfg, injection_manifest)
+    wrapped_train_dataset_literal = _literal(wrapped_train_dataset_cfg)
+    wrapped_train_dataset_literal = wrapped_train_dataset_literal.replace("'__TRAIN_PIPELINE__'", "train_pipeline")
+    wrapped_train_dataset_literal = wrapped_train_dataset_literal.replace("'__BACKEND_ARGS__'", "backend_args")
     content = f"""_base_ = {_literal(str(Path(env_cfg["train_base_config"]).resolve()))}
 
 classes = {_literal(class_names)}
 metainfo = dict(classes=classes)
 data_root = {_literal(str(dataset_root.resolve()) + "/")}
 backend_args = None
+custom_imports = dict(
+    imports=['ITD_agent.segmentation.model_training.mmdet_custom.itd_training_hooks'],
+    allow_failed_imports=False,
+)
 
 train_pipeline = {train_pipeline}
 
@@ -410,26 +483,25 @@ test_pipeline = {test_pipeline}
 
 {model_update}
 
+train_dataset = {wrapped_train_dataset_literal}
+if isinstance(train_dataset, dict) and train_dataset.get('dataset'):
+    train_dataset['dataset']['metainfo'] = metainfo
+elif isinstance(train_dataset, dict):
+    train_dataset['metainfo'] = metainfo
+
 train_dataloader = dict(
+    _delete_=True,
     batch_size={batch_size},
     num_workers={num_workers},
     persistent_workers={str(num_workers > 0)},
     pin_memory={str(pin_memory)},
 {prefetch_line}    sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=dict(type='AspectRatioBatchSampler'),
-    dataset=dict(
-        type='CocoDataset',
-        data_root=data_root,
-        ann_file={_literal(str(train_json.resolve()))},
-        data_prefix=dict(img=''),
-        metainfo=metainfo,
-        filter_cfg=dict(filter_empty_gt=True, min_size=1),
-        pipeline=train_pipeline,
-        backend_args=backend_args,
-    ),
+    dataset=train_dataset,
 )
 
 val_dataloader = dict(
+    _delete_=True,
     batch_size=1,
     num_workers={num_workers},
     persistent_workers={str(num_workers > 0)},
@@ -448,6 +520,7 @@ val_dataloader = dict(
     ),
 )
 test_dataloader = dict(
+    _delete_=True,
     batch_size=1,
     num_workers={num_workers},
     persistent_workers={str(num_workers > 0)},
@@ -504,6 +577,13 @@ default_hooks = dict(
     sampler_seed=dict(type='DistSamplerSeedHook'),
     visualization=dict(type='DetVisualizationHook'),
 )
+custom_hooks = [
+    dict(
+        type='ITDTrainingTraceHook',
+        injection_manifest_path={_literal(str(injection_manifest.get("manifest_path") or ""))},
+        summary_interval=100,
+    ),
+]
 
 train_cfg_seed = {seed}
 randomness = dict(seed=train_cfg_seed)
@@ -532,6 +612,11 @@ def main() -> None:
     work_dir = ensure_dir(trainer_root / "work_dir")
     dataset_dir, dataset_summary_json = _ensure_public_dataset(args.config, cfg)
     dataset_summary = load_json(dataset_summary_json)
+    injection_manifest = build_training_injection_manifest(
+        cfg=cfg,
+        dataset_summary=dataset_summary,
+        output_dir=training_dir,
+    )
 
     ann_dir = dataset_dir / "annotations"
     train_json = ann_dir / "instances_train.json"
@@ -543,6 +628,16 @@ def main() -> None:
         raise FileNotFoundError(f"缺少验证标注文件: {val_json}")
     if not test_json.exists():
         raise FileNotFoundError(f"缺少测试标注文件: {test_json}")
+
+    sanitized_annotation_files, sanitize_summary = _materialize_sanitized_annotation_files(
+        training_dir=training_dir,
+        train_json=train_json,
+        val_json=val_json,
+        test_json=test_json,
+    )
+    train_json = sanitized_annotation_files["train"]
+    val_json = sanitized_annotation_files["val"]
+    test_json = sanitized_annotation_files["test"]
 
     class_names_raw = cfg.get("segmentation_class_names", ["crown"])
     if isinstance(class_names_raw, str):
@@ -560,7 +655,8 @@ def main() -> None:
     weight_decay = float(cfg.get("segmentation_train_weight_decay", _default_weight_decay(algorithm_spec)))
     seed = int(cfg.get("segmentation_train_seed", 42))
     val_interval = int(cfg.get("segmentation_train_val_interval", 1))
-    use_amp = to_bool(cfg.get("segmentation_train_amp"), default=False)
+    amp_default = algorithm_spec.train_loop_style != "iter_adamw"
+    use_amp = to_bool(cfg.get("segmentation_train_amp"), default=amp_default)
     pin_memory = to_bool(cfg.get("segmentation_train_pin_memory"), default=True)
     prefetch_factor_raw = cfg.get("segmentation_train_prefetch_factor")
     prefetch_factor = int(prefetch_factor_raw) if prefetch_factor_raw not in {None, ""} else 4
@@ -591,6 +687,7 @@ def main() -> None:
         use_amp=use_amp,
         pin_memory=pin_memory,
         prefetch_factor=prefetch_factor,
+        injection_manifest=injection_manifest,
     )
 
     summary: dict[str, Any] = {
@@ -619,11 +716,14 @@ def main() -> None:
         "train_prefetch_factor": prefetch_factor,
         "driver_module": env_cfg["driver_module"],
         "test_json": str(test_json),
+        "annotation_sanitization": sanitize_summary,
+        "expert_injection_manifest": str(injection_manifest.get("manifest_path") or ""),
+        "expert_injection": injection_manifest,
     }
 
     if args.build_only:
         dump_json(summary, training_dir / "train_summary.json")
-        print(f"[OK] segmentation training config built only: {generated_config}")
+        print(f"[OK] segmentation training config built only: {generated_config}", flush=True)
         return
 
     repo_root = Path(env_cfg["repo_root"]).resolve()
@@ -635,11 +735,12 @@ def main() -> None:
         f"source {env_cfg['conda_sh']} && "
         f"conda activate {env_cfg['conda_env']} && "
         f"export PYTHONNOUSERSITE=1 && "
+        f"export PYTHONUNBUFFERED=1 && "
         f"export PYTHONPATH={repo_root}:{PROJECT_ROOT}:${{PYTHONPATH:-}} && "
-        f"python {train_py} {generated_config} --work-dir {work_dir}"
+        f"python -u {train_py} {generated_config} --work-dir {work_dir}"
     )
-    print("[RUN segmentation mmdet trainer]")
-    print(bash_cmd)
+    print("[RUN segmentation mmdet trainer]", flush=True)
+    print(bash_cmd, flush=True)
     result = subprocess.run(["bash", "-lc", bash_cmd], cwd=str(repo_root))
 
     best_ckpt = _find_best_ckpt(work_dir)
@@ -661,6 +762,7 @@ def main() -> None:
         dump_json(summary, training_dir / "train_summary.json")
         eval_cmd = [
             sys.executable,
+            "-u",
             "-m",
             "ITD_agent.segmentation.model_training.test_mmdet_instance",
             "--config",
@@ -668,8 +770,8 @@ def main() -> None:
             "--checkpoint",
             str(best_ckpt),
         ]
-        print("[RUN segmentation mmdet evaluation]")
-        print(" ".join(eval_cmd))
+        print("[RUN segmentation mmdet evaluation]", flush=True)
+        print(" ".join(eval_cmd), flush=True)
         eval_result = subprocess.run(eval_cmd)
         summary["eval_returncode"] = int(eval_result.returncode)
         if eval_result.returncode != 0:
@@ -677,7 +779,7 @@ def main() -> None:
             raise RuntimeError("segmentation mmdet evaluation failed")
 
     dump_json(summary, training_dir / "train_summary.json")
-    print(f"[OK] segmentation mmdet training done: {best_ckpt}")
+    print(f"[OK] segmentation mmdet training done: {best_ckpt}", flush=True)
 
 
 if __name__ == "__main__":

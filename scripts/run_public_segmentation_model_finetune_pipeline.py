@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,8 +16,10 @@ LEGACY_SUMMARY_FILENAME = "public_segmentation_finetune_pipeline_summary.json"
 
 
 def run_cmd(cmd: list[str], cwd: str | None = None) -> None:
-    print("[RUN]", " ".join(cmd))
-    result = subprocess.run(cmd, cwd=cwd)
+    print("[RUN]", " ".join(cmd), flush=True)
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    result = subprocess.run(cmd, cwd=cwd, env=env)
     if result.returncode != 0:
         raise RuntimeError(f"命令执行失败: {' '.join(cmd)}")
 
@@ -59,7 +62,7 @@ def main() -> None:
     summary: dict = {"config": args.config, "mode": "public_segmentation_model_finetune", "steps": []}
 
     trainer_module = resolve_segmentation_trainer_module(cfg)
-    run_cmd([sys.executable, "-m", trainer_module, "--config", args.config])
+    run_cmd([sys.executable, "-u", "-m", trainer_module, "--config", args.config])
 
     train_summary_path = out_dir / cfg.get("segmentation_train_out_dirname", "segmentation_training") / "train_summary.json"
     if not train_summary_path.exists():
@@ -99,6 +102,7 @@ def main() -> None:
     run_cmd(
         [
             sys.executable,
+            "-u",
             "-m",
             "ITD_agent.segmentation.model_training.infer_segmentation_finetuned",
             "--config",
@@ -148,7 +152,7 @@ def main() -> None:
                 "enable_rerun_after_finetune=true，但 integration_summary 显示不能 rerun: "
                 f"{integration_summary.get('reason', 'unknown reason')}"
             )
-        run_cmd([sys.executable, "-m", "scripts.run_ITD_agent_experiment", "--config", str(ft_cfg)])
+        run_cmd([sys.executable, "-u", "-m", "scripts.run_ITD_agent_experiment", "--config", str(ft_cfg)])
         summary["steps"].append({"step": "rerun_experiment", "config": str(ft_cfg)})
 
         base_cfg_path = cfg.get("base_config")
@@ -170,6 +174,7 @@ def main() -> None:
             run_cmd(
                 [
                     sys.executable,
+                    "-u",
                     "-m",
                     "ITD_agent.segmentation.finetuning.evaluate_finetune_gain",
                     "--before_csv",
@@ -201,7 +206,7 @@ def main() -> None:
                 }
             )
     else:
-        print("[SKIP] rerun after finetune is disabled by config")
+        print("[SKIP] rerun after finetune is disabled by config", flush=True)
         summary["steps"].append(
             {
                 "step": "rerun_experiment",
@@ -212,7 +217,7 @@ def main() -> None:
 
     dump_json(summary, out_dir / SUMMARY_FILENAME)
     dump_json(summary, out_dir / LEGACY_SUMMARY_FILENAME)
-    print(f"[OK] public segmentation-model finetune pipeline done: {out_dir}")
+    print(f"[OK] public segmentation-model finetune pipeline done: {out_dir}", flush=True)
 
 
 if __name__ == "__main__":

@@ -10,8 +10,11 @@ import pandas as pd
 
 from ITD_agent.config_adapter import load_runtime_config
 from ITD_agent.orchestration.output_management import (
+    apply_persistent_retention,
+    build_retained_summary,
     cleanup_temp_runtime_dir,
     finalize_run_outputs,
+    get_cleanup_roots,
     keep_legacy_output_aliases,
     sync_runtime_artifacts_to_persistent_root,
 )
@@ -61,7 +64,12 @@ def slim_group_summary(group_summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def cleanup_group_artifacts(group_summaries: list[dict[str, Any]], keep_debug_outputs: bool) -> dict[str, Any]:
+def cleanup_group_artifacts(
+    group_summaries: list[dict[str, Any]],
+    keep_debug_outputs: bool,
+    *,
+    cleanup_roots: tuple[Path, ...],
+) -> dict[str, Any]:
     removed: dict[str, Any] = {"removed_files": [], "removed_vector_datasets": []}
     if keep_debug_outputs:
         return removed
@@ -79,26 +87,23 @@ def cleanup_group_artifacts(group_summaries: list[dict[str, Any]], keep_debug_ou
             "y_inst_color_png",
         ]:
             path = group_summary.get(key)
-            if path and remove_path(path):
+            if path and remove_path(path, allowed_roots=cleanup_roots):
                 removed["removed_files"].append(path)
 
         for key in ["roi_xiaoban_shp", "group_inst_shp", "filtered_group_inst_shp"]:
             path = group_summary.get(key)
             if path:
-                removed_vec = remove_vector_dataset(path)
+                removed_vec = remove_vector_dataset(path, allowed_roots=cleanup_roots)
                 if removed_vec:
                     removed["removed_vector_datasets"].append({"label": key, "paths": removed_vec})
 
         group_output_dir = group_summary.get("group_output_dir")
-        if group_output_dir and remove_path(group_output_dir):
+        if group_output_dir and remove_path(group_output_dir, allowed_roots=cleanup_roots):
             removed["removed_files"].append(group_output_dir)
 
         if group_output_dir:
             group_dir = Path(group_output_dir).parent
-            if group_dir.exists():
-                import shutil
-
-                shutil.rmtree(group_dir, ignore_errors=True)
+            if group_dir.exists() and remove_path(group_dir, allowed_roots=cleanup_roots):
                 removed["removed_files"].append(str(group_dir))
 
     return removed
@@ -413,6 +418,7 @@ def run_grouped_experiment(config_path: str) -> dict[str, Any]:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     group_root = _group_root_from_cfg(cfg) / f"{cfg.get('run_name', 'grouped_run')}_{stamp}"
     ensure_dir(group_root)
+    cleanup_roots = get_cleanup_roots(cfg, extra_roots=[group_root])
 
     plan_json = group_root / "xiaoban_plan.json"
     save_json(group_plan, plan_json)
@@ -446,9 +452,10 @@ def run_grouped_experiment(config_path: str) -> dict[str, Any]:
     cleanup_info = cleanup_group_artifacts(
         group_summaries=group_summaries,
         keep_debug_outputs=bool(cfg.get("keep_debug_outputs", False)),
+        cleanup_roots=cleanup_roots,
     )
     if not cfg.get("keep_debug_outputs", False):
-        remove_path(plan_json)
+        remove_path(plan_json, allowed_roots=cleanup_roots)
     slim_groups = [slim_group_summary(gs) for gs in group_summaries]
 
     summary = {
@@ -499,8 +506,8 @@ def run_grouped_experiment(config_path: str) -> dict[str, Any]:
         summary["report_md"] = report_path
         summary["report_json"] = report_json
     else:
-        remove_path(report_path)
-        remove_path(report_json)
+        remove_path(report_path, allowed_roots=cleanup_roots)
+        remove_path(report_json, allowed_roots=cleanup_roots)
         summary["report_md"] = None
     sync_info = sync_runtime_artifacts_to_persistent_root(summary=summary, runtime_cfg=cfg)
     summary["runtime_artifact_sync"] = sync_info
@@ -515,10 +522,12 @@ def run_grouped_experiment(config_path: str) -> dict[str, Any]:
     if keep_legacy_output_aliases(cfg):
         copy_optional_file(summary["summary_json"], Path(summary["summary_json"]).resolve().parent / LEGACY_RUN_SUMMARY_FILENAME)
     else:
-        remove_path(legacy_summary_path)
+        remove_path(legacy_summary_path, allowed_roots=cleanup_roots)
     if keep_legacy_output_aliases(cfg) and cfg.get("keep_debug_outputs", False) and report_path:
         copy_optional_file(report_path, Path(report_path).resolve().parent / LEGACY_RUN_REPORT_FILENAME)
     summary["runtime_cleanup"] = cleanup_temp_runtime_dir(cfg)
+    summary["retention"] = apply_persistent_retention(summary=summary, runtime_cfg=cfg)
+    summary = build_retained_summary(summary=summary, runtime_cfg=cfg)
     save_json(summary, summary["summary_json"])
     print(f"[grouped_runner] summary saved to: {summary['summary_json']}")
     if cfg.get("keep_debug_outputs", False):

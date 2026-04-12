@@ -6,6 +6,32 @@ import sys
 from pathlib import Path
 
 
+class _BrokenPipeTolerantStream:
+    def __init__(self, stream):
+        self._stream = stream
+        self._broken = False
+
+    def write(self, data):
+        if self._broken:
+            return len(data)
+        try:
+            return self._stream.write(data)
+        except BrokenPipeError:
+            self._broken = True
+            return len(data)
+
+    def flush(self):
+        if self._broken:
+            return
+        try:
+            self._stream.flush()
+        except BrokenPipeError:
+            self._broken = True
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 def _split_classes(raw: str) -> list[str]:
     return [x.strip() for x in str(raw).split(",") if x.strip()]
 
@@ -25,6 +51,9 @@ def _register_dataset(name: str, json_file: str, image_root: str, thing_classes:
 
 
 def main() -> None:
+    sys.stdout = _BrokenPipeTolerantStream(sys.stdout)
+    sys.stderr = _BrokenPipeTolerantStream(sys.stderr)
+
     repo_root = Path(os.environ.get("MASKDINO_REPO_ROOT", "/home/xth/MaskDINO")).resolve()
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -41,7 +70,6 @@ def main() -> None:
     parser.add_argument("--val-dataset-name", required=True)
     parser.add_argument("--test-dataset-name")
     parser.add_argument("--thing-classes", required=True)
-    parser.add_argument("--eval-only", dest="eval_only", action="store_true")
     parser.add_argument("--EVAL_FLAG", type=int, default=1)
     args = parser.parse_args()
 

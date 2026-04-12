@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import argparse
 import math
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from ITD_agent.segmentation.finetuning.io_utils import dump_json, ensure_dir, load_json, load_yaml, to_bool
+from ITD_agent.segmentation.model_training.expert_injection import build_training_injection_manifest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _algorithm_defaults() -> dict[str, Any]:
@@ -55,18 +57,19 @@ def _ensure_public_dataset(args_config: str, cfg: dict[str, Any]) -> tuple[Path,
         return dataset_dir, summary_path
 
     if dataset_dir.exists() and force_rebuild:
-        print(f"[INFO] removing existing segmentation dataset dir: {dataset_dir}")
-        shutil.rmtree(dataset_dir)
+        # Rebuild in place so reruns do not depend on deleting large output trees first.
+        print(f"[INFO] rebuilding segmentation dataset in place: {dataset_dir}", flush=True)
 
     cmd = [
         sys.executable,
+        "-u",
         "-m",
         "ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset",
         "--config",
         args_config,
     ]
-    print("[RUN segmentation dataset prepare]")
-    print(" ".join(cmd))
+    print("[RUN segmentation dataset prepare]", flush=True)
+    print(" ".join(cmd), flush=True)
     result = subprocess.run(cmd)
     if result.returncode != 0:
         raise RuntimeError("ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset failed")
@@ -184,6 +187,11 @@ def main() -> None:
     work_dir = ensure_dir(trainer_root / "work_dir")
     dataset_dir, dataset_summary_json = _ensure_public_dataset(args.config, cfg)
     dataset_summary = load_json(dataset_summary_json)
+    injection_manifest = build_training_injection_manifest(
+        cfg=cfg,
+        dataset_summary=dataset_summary,
+        output_dir=training_dir,
+    )
 
     num_train_images = int(dataset_summary["counts"]["train_images"])
     num_val_images = int(dataset_summary["counts"]["val_images"])
@@ -276,11 +284,13 @@ def main() -> None:
         "val_interval": val_interval,
         "eval_period": eval_period,
         "checkpoint_period": checkpoint_period,
+        "expert_injection_manifest": str(injection_manifest.get("manifest_path") or ""),
+        "expert_injection": injection_manifest,
     }
 
     if args.build_only:
         dump_json(summary, training_dir / "train_summary.json")
-        print(f"[OK] segmentation MaskDINO training config built only: {generated_config}")
+        print(f"[OK] segmentation MaskDINO training config built only: {generated_config}", flush=True)
         return
 
     repo_root_path = Path(repo_root).resolve()
@@ -289,10 +299,12 @@ def main() -> None:
         f"source {conda_sh} && "
         f"conda activate {conda_env} && "
         f"export PYTHONNOUSERSITE=1 && "
+        f"export PYTHONUNBUFFERED=1 && "
         f"export MASKDINO_REPO_ROOT={repo_root_path} && "
-        f"export PYTHONPATH={Path(__file__).resolve().parents[1]}:{repo_root_path}:${{PYTHONPATH:-}} && "
-        f"python -m {entry_module} "
+        f"export PYTHONPATH={PROJECT_ROOT}:{repo_root_path}:${{PYTHONPATH:-}} && "
+        f"python -u -m {entry_module} "
         f"--num-gpus {num_gpus} "
+        f"--resume "
         f"--config-file {generated_config} "
         f"--train-json {train_json} "
         f"--val-json {val_json} "
@@ -303,8 +315,8 @@ def main() -> None:
         f"--test-dataset-name {test_dataset_name} "
         f"--thing-classes {','.join(class_names)}"
     )
-    print("[RUN segmentation MaskDINO trainer]")
-    print(bash_cmd)
+    print("[RUN segmentation MaskDINO trainer]", flush=True)
+    print(bash_cmd, flush=True)
     result = subprocess.run(["bash", "-lc", bash_cmd], cwd=str(repo_root_path))
 
     best_ckpt = _find_best_ckpt(work_dir)
@@ -325,6 +337,7 @@ def main() -> None:
         dump_json(summary, training_dir / "train_summary.json")
         eval_cmd = [
             sys.executable,
+            "-u",
             "-m",
             "ITD_agent.segmentation.model_training.test_maskdino_instance",
             "--config",
@@ -332,15 +345,15 @@ def main() -> None:
             "--checkpoint",
             str(best_ckpt),
         ]
-        print("[RUN segmentation MaskDINO evaluation]")
-        print(" ".join(eval_cmd))
+        print("[RUN segmentation MaskDINO evaluation]", flush=True)
+        print(" ".join(eval_cmd), flush=True)
         eval_result = subprocess.run(eval_cmd)
         summary["eval_returncode"] = int(eval_result.returncode)
         if eval_result.returncode != 0:
             dump_json(summary, training_dir / "train_summary.json")
             raise RuntimeError("segmentation MaskDINO evaluation failed")
     dump_json(summary, training_dir / "train_summary.json")
-    print(f"[OK] segmentation MaskDINO training done: {best_ckpt}")
+    print(f"[OK] segmentation MaskDINO training done: {best_ckpt}", flush=True)
 
 
 if __name__ == "__main__":

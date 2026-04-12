@@ -9,6 +9,8 @@ from typing import Any
 
 from ITD_agent.segmentation.finetuning.io_utils import dump_json, ensure_dir, load_json, load_yaml
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 
 def _resolve_checkpoint(train_summary: dict[str, Any], cli_checkpoint: str | None) -> Path:
     value = cli_checkpoint or train_summary.get("best_ckpt")
@@ -98,8 +100,9 @@ def main() -> None:
         f"source {conda_sh} && "
         f"conda activate {conda_env} && "
         f"export PYTHONNOUSERSITE=1 && "
+        f"export PYTHONUNBUFFERED=1 && "
         f"export MASKDINO_REPO_ROOT={repo_root} && "
-        f"export PYTHONPATH={Path(__file__).resolve().parents[1]}:{repo_root}:${{PYTHONPATH:-}} && "
+        f"export PYTHONPATH={PROJECT_ROOT}:{repo_root}:${{PYTHONPATH:-}} && "
         f"{' '.join(shlex.quote(str(x)) for x in cmd_parts)}"
     )
     print("[RUN segmentation MaskDINO test]")

@@ -1,0 +1,51 @@
+experiment_name: forest_agent_expert_finetune
+run_name: expert_generalist_maskdino_public_finetune
+base_config: /home/xth/forest_agent_project/configs/templates/runtime/runtime_dom197_segmentation_candidates.yaml
+output_dir: /mnt/f/forest_agent_project/outputs/experts/generalist_maskdino
+segmentation_algorithm: maskdino_official
+target_model_role: child_model
+target_expert_family: cross_domain_generalist
+public_dataset_root: /mnt/f/forest_agent_project/open_dataset/ISPRS_ITD/ITD
+public_dataset_split_mapping:
+  train_1: Training_set/Dataset_1_train
+  train_2: Training_set/Dataset_2_train
+  train_3: Training_set/Dataset_3_train
+  train_4: Training_set/Dataset_4_train
+  train_5: Training_set/Dataset_5_train
+  train_6: Training_set/Dataset_6_train
+  train_7: Training_set/Dataset_7_train
+  train_8: Training_set/Dataset_8_train
+  train_9: Training_set/Dataset_9_train
+  validation: Validation_set
+  val: Validation_set
+  test: Testing_set
+public_dataset_train_splits: [train_1, train_2, train_3, train_4, train_5, train_6, train_7, train_8, train_9]
+public_dataset_val_splits: [validation]
+public_dataset_test_splits: [test]
+public_dataset_image_dirname: images
+public_dataset_annotation_dirname: annotation
+segmentation_dataset_dirname: external_segmentation_dataset
+segmentation_dataset_force_rebuild: true
+segmentation_train_conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+segmentation_train_conda_env: maskdino
+segmentation_train_repo_root: /home/xth/MaskDINO
+segmentation_train_out_dirname: segmentation_training
+segmentation_train_base_config: /home/xth/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s_dowsample1_2048.yaml
+segmentation_train_init_checkpoint: /home/xth/MaskDINO/weights/maskdino_r50.pth
+segmentation_train_batch_size: 1
+segmentation_train_num_workers: 4
+segmentation_train_epochs: 8
+segmentation_train_lr: 6.25e-06
+segmentation_train_weight_decay: 0.05
+segmentation_class_names: [crown]
+segmentation_num_classes: 1
+expert_training_strategy:
+  dataset_wrapper: {type: RepeatDataset, times: 1}
+  curriculum_mode: mixed_domain
+  replay_ratio: 0.5
+  hard_case_ratio: 0.35
+  prior_axes: [domain, density, terrain, quality]
+knowledge_injection_strategy:
+  mode: expert_guided
+  target_expert_family: cross_domain_generalist
+  prior_axes: [domain, density, terrain, quality]

@@ -1,0 +1,167 @@
+taxonomy_version: 1
+default_expert_family: cross_domain_generalist
+
+expert_families:
+  - family_id: dense_adhesion
+    display_name: Dense Adhesion Expert
+    description: For closed canopy, crown adhesion, under-count, and dense mixed stands.
+    algorithms_priority:
+      - mmdet_htc
+      - maskdino_official
+    selection_rules:
+      forest_types: [dense_mixed_forest, evergreen_broadleaf, mixed_forest, closed_canopy]
+      terrain_tags: [gentle, moderate]
+      scene_tags: [dense, adhesion, overlap, closed_canopy]
+      failure_categories: [dense_canopy_adhesion, crown_overlap_conflict, count_underestimate_dense]
+      error_patterns: [count_under, closure_high, crown]
+    template_candidates:
+      mmdet_htc: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_dense_adhesion_htc.yaml
+      maskdino_official: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_dense_adhesion_maskdino.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 8
+      batch_size: 1
+      num_workers: 4
+      lr: 0.0001
+      weight_decay: 0.0001
+      supervision_mode: hybrid
+      dataset_wrapper:
+        type: RepeatDataset
+        times: 2
+      curriculum_mode: hard_case_first
+      replay_ratio: 0.35
+      hard_case_ratio: 0.55
+      prior_axes: [density, closure, overlap]
+
+  - family_id: shadow_topography
+    display_name: Shadow Topography Expert
+    description: For north shade, terrain-shadow confusion, steep slopes, and relief-driven boundary distortion.
+    algorithms_priority:
+      - mmdet_htc
+      - mmdet_mask2former
+      - maskdino_official
+    selection_rules:
+      forest_types: [mountain_forest, mixed_forest, coniferous_forest]
+      terrain_tags: [steep, shadow, north_shade, ridge, mountain]
+      scene_tags: [shadow, shade, terrain, slope]
+      failure_categories: [terrain_shadow_confused, north_slope_shadow_confused, slope_boundary_distorted]
+      error_patterns: [closure_low, crown, count_under]
+    template_candidates:
+      mmdet_htc: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_shadow_topography_htc.yaml
+      mmdet_mask2former: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_shadow_topography_mask2former.yaml
+      maskdino_official: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_shadow_topography_maskdino.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 8
+      batch_size: 1
+      num_workers: 4
+      lr: 6.25e-06
+      weight_decay: 0.05
+      supervision_mode: hybrid
+      dataset_wrapper:
+        type: RepeatDataset
+        times: 2
+      curriculum_mode: terrain_shadow_first
+      replay_ratio: 0.40
+      hard_case_ratio: 0.60
+      prior_axes: [terrain, shadow, closure]
+
+  - family_id: large_crown_over_split
+    display_name: Large Crown Over-Split Expert
+    description: For sparse/open stands with large crowns, over-segmentation, and boundary fragmentation.
+    algorithms_priority:
+      - mmdet_cascade_mask_rcnn
+      - mmdet_mask_scoring_rcnn
+    selection_rules:
+      forest_types: [open_forest, sparse_forest, plantation]
+      terrain_tags: [gentle, moderate]
+      scene_tags: [large_crown, open_canopy, sparse]
+      failure_categories: [count_overestimate, crown_boundary_fragmented, over_split_large_crown]
+      error_patterns: [count_over, closure_high, crown]
+    template_candidates:
+      mmdet_cascade_mask_rcnn: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_large_crown_cascade.yaml
+      mmdet_mask_scoring_rcnn: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_large_crown_mask_scoring.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 8
+      batch_size: 1
+      num_workers: 4
+      lr: 0.00125
+      weight_decay: 0.0001
+      supervision_mode: hybrid
+      dataset_wrapper:
+        type: ClassBalancedDataset
+        oversample_thr: 0.001
+      curriculum_mode: boundary_recovery_first
+      replay_ratio: 0.25
+      hard_case_ratio: 0.50
+      prior_axes: [crown_width, boundary, closure]
+
+  - family_id: boundary_calibration
+    display_name: Boundary Calibration Expert
+    description: For boundary-quality mismatch, mask calibration, and contour refinement.
+    algorithms_priority:
+      - mmdet_mask_scoring_rcnn
+      - mmdet_cascade_mask_rcnn
+    selection_rules:
+      forest_types: [open_forest, mixed_forest]
+      terrain_tags: [gentle, moderate]
+      scene_tags: [boundary, contour, edge]
+      failure_categories: [crown_boundary_fragmented, boundary_score_mismatch]
+      error_patterns: [crown]
+    template_candidates:
+      mmdet_mask_scoring_rcnn: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_boundary_mask_scoring.yaml
+      mmdet_cascade_mask_rcnn: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_large_crown_cascade.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 6
+      batch_size: 1
+      num_workers: 4
+      lr: 0.00125
+      weight_decay: 0.0001
+      supervision_mode: hybrid
+      dataset_wrapper:
+        type: ClassBalancedDataset
+        oversample_thr: 0.001
+      curriculum_mode: boundary_quality_first
+      replay_ratio: 0.20
+      hard_case_ratio: 0.45
+      prior_axes: [boundary, quality]
+
+  - family_id: cross_domain_generalist
+    display_name: Cross Domain Generalist Expert
+    description: For unseen stands, weak evidence routing, and cross-domain generalization.
+    algorithms_priority:
+      - mmdet_mask2former
+      - maskdino_official
+      - mmdet_htc
+    selection_rules:
+      forest_types: [mixed_forest, unknown_forest]
+      terrain_tags: [gentle, moderate, steep]
+      scene_tags: [cross_domain, generalist, unknown]
+      failure_categories: [cross_domain_shift, uncategorized]
+      error_patterns: [count, crown, closure]
+    template_candidates:
+      mmdet_mask2former: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_generalist_mask2former.yaml
+      maskdino_official: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_generalist_maskdino.yaml
+      mmdet_htc: /home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_shadow_topography_htc.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 8
+      batch_size: 1
+      num_workers: 4
+      lr: 6.25e-06
+      weight_decay: 0.05
+      supervision_mode: hybrid
+      dataset_wrapper:
+        type: RepeatDataset
+        times: 1
+      curriculum_mode: mixed_domain
+      replay_ratio: 0.50
+      hard_case_ratio: 0.35
+      prior_axes: [domain, density, terrain, quality]

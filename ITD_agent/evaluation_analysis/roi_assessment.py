@@ -46,11 +46,12 @@ def _candidate_priority_score(candidate: dict[str, Any]) -> float:
 
 def _prune_candidate_rois(candidate_rois: list[dict[str, Any]], roi_cfg: dict[str, Any], top_k: int) -> list[dict[str, Any]]:
     if len(candidate_rois) <= 1:
-        return candidate_rois[: max(top_k, 0)]
+        return candidate_rois[: max(int(roi_cfg.get("signal_candidate_max_keep", max(top_k * 4, 8))), 0)]
 
     ratio_thr = float(roi_cfg.get("signal_candidate_score_ratio_thr", 0.82))
     gap_thr = float(roi_cfg.get("signal_candidate_score_gap_thr", 0.08))
     keep_min = max(1, int(roi_cfg.get("signal_candidate_keep_min", 1)))
+    keep_max = max(keep_min, int(roi_cfg.get("signal_candidate_max_keep", max(top_k * 4, 8))))
 
     ordered = sorted(candidate_rois, key=_candidate_priority_score, reverse=True)
     best_priority = _candidate_priority_score(ordered[0])
@@ -62,10 +63,10 @@ def _prune_candidate_rois(candidate_rois: list[dict[str, Any]], roi_cfg: dict[st
         priority = _candidate_priority_score(item)
         if len(kept) < keep_min or priority >= absolute_floor or priority >= relative_floor:
             kept.append(item)
-        if len(kept) >= max(top_k, keep_min):
+        if len(kept) >= keep_max:
             break
 
-    return kept[: max(top_k, keep_min)]
+    return kept[:keep_max]
 
 
 def _should_request_llm_roi_selection(
@@ -116,8 +117,8 @@ def _should_request_llm_roi_decision(
         return False, f"已达到最大 ROI 轮次 {max_rounds}，直接停止细化。"
     if not triggers:
         return False, "当前没有命中任何 ROI 触发指标，直接停止细化。"
-    if candidate_count < min_problem_cases:
-        return False, f"有效问题 ROI 数量 {candidate_count} 小于最小阈值 {min_problem_cases}，直接停止细化。"
+    if candidate_count < 1:
+        return False, "当前未检测到有效问题 ROI，直接停止细化。"
     if improvement is not None and float(improvement) < -improvement_epsilon:
         return False, f"最近一轮质量下降 {float(improvement):.4f}，超过允许回撤，直接停止细化。"
     return True, "虽然启发式未建议继续，但仍存在边界不确定性，允许 LLM 复核。"
@@ -179,14 +180,14 @@ def build_roi_assessment(
                     selected_lookup = {item.get("candidate_id"): item for item in candidate_rois}
                     reordered = [selected_lookup[item_id] for item_id in selected_ids if item_id in selected_lookup]
                     remaining = [item for item in candidate_rois if item.get("candidate_id") not in set(selected_ids)]
-                    candidate_rois = (reordered + remaining)[:top_k]
+                    candidate_rois = reordered + remaining
                 signal_roi_summary["llm_selection"] = llm_selection
         elif candidate_rois and use_llm:
             signal_roi_summary["llm_selection_skipped"] = True
         pruned_candidates = _prune_candidate_rois(candidate_rois, roi_cfg, top_k)
         signal_roi_summary["pruned_candidate_ids"] = [str(item.get("candidate_id") or "") for item in pruned_candidates]
         signal_roi_summary["pruned_candidate_count"] = len(pruned_candidates)
-        candidate_rois = pruned_candidates[:top_k]
+        candidate_rois = pruned_candidates
     if not candidate_rois:
         candidate_rois = top_cases
 
@@ -197,7 +198,7 @@ def build_roi_assessment(
         triggers.append("mean_crown_width_error_ratio")
     if closure_abs >= float(roi_cfg.get("closure_error_abs_thr", 0.10)):
         triggers.append("closure_error_abs")
-    if len(candidate_rois) >= min_problem_cases:
+    if len(candidate_rois) >= 1:
         triggers.append("problem_roi_cases")
 
     improvement = None
@@ -208,7 +209,7 @@ def build_roi_assessment(
         enabled
         and round_idx < max_rounds
         and bool(triggers)
-        and len(candidate_rois) >= min_problem_cases
+        and len(candidate_rois) >= 1
         and (improvement is None or improvement >= -improvement_epsilon)
     )
     quality_label = "acceptable" if not heuristic_continue else "needs_roi_refinement"

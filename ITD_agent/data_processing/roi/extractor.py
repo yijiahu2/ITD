@@ -15,7 +15,11 @@ from rasterio.warp import reproject
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
-from ITD_agent.data_processing.inventory.normalizer import crop_raster_to_geometry, enrich_xiaoban_clip_fields
+from ITD_agent.data_processing.inventory.normalizer import (
+    crop_raster_to_geometry,
+    enrich_xiaoban_clip_fields,
+    standardize_inventory_crown_width,
+)
 
 
 def _ensure_dir(path: str | Path) -> Path:
@@ -56,6 +60,17 @@ def _safe_float(value: Any, default: float | None = None) -> float | None:
         return float(value)
     except Exception:
         return default
+
+
+def _normalize_closure(value: Any) -> float | None:
+    closure = _safe_float(value)
+    if closure is None:
+        return None
+    if closure > 1.5:
+        closure = closure / 100.0
+    if closure < 0:
+        return None
+    return min(float(closure), 1.0)
 
 
 def _box_mean(arr: np.ndarray, radius: int) -> np.ndarray:
@@ -162,6 +177,17 @@ def _instance_boundary_density(labels: np.ndarray) -> np.ndarray:
     return _box_mean(boundary, 5)
 
 
+def _pixel_size_m(transform) -> float:
+    try:
+        res_x = abs(float(transform.a))
+        res_y = abs(float(transform.e))
+        if res_x > 0 and res_y > 0:
+            return (res_x + res_y) / 2.0
+    except Exception:
+        pass
+    return 1.0
+
+
 def _mask_to_geometries(mask_arr: np.ndarray, *, transform) -> list[Any]:
     geoms = []
     for geom, value in shapes(mask_arr.astype(np.uint8), mask=mask_arr.astype(bool), transform=transform):
@@ -189,6 +215,377 @@ def _keep_top_connected_components(mask_arr: np.ndarray, *, max_components: int)
     return kept
 
 
+def _load_prior_gdf(base_cfg: dict[str, Any]) -> tuple[gpd.GeoDataFrame | None, str | None, dict[str, Any]]:
+    xiaoban_path = base_cfg.get("xiaoban_shp")
+    prior_id_field = str(base_cfg.get("xiaoban_id_field") or "").strip() or None
+    if not xiaoban_path or not Path(str(xiaoban_path)).exists() or not prior_id_field:
+        return None, None, {}
+
+    prior_gdf = gpd.read_file(str(xiaoban_path))
+    if prior_gdf.crs is None or prior_id_field not in prior_gdf.columns:
+        return None, None, {}
+
+    prior_gdf = prior_gdf.copy()
+    prior_gdf[prior_id_field] = prior_gdf[prior_id_field].astype(str)
+
+    crown_field = str(base_cfg.get("crown_field") or "").strip()
+    closure_field = str(base_cfg.get("closure_field") or "").strip()
+    density_field = str(base_cfg.get("density_field") or "").strip()
+    tree_count_field = str(base_cfg.get("tree_count_field") or "").strip()
+    area_ha_field = str(base_cfg.get("area_ha_field") or "").strip()
+
+    if crown_field and crown_field in prior_gdf.columns:
+        prior_gdf["_expected_crown_width_m"] = prior_gdf[crown_field].apply(standardize_inventory_crown_width)
+    else:
+        prior_gdf["_expected_crown_width_m"] = np.nan
+
+    if closure_field and closure_field in prior_gdf.columns:
+        prior_gdf["_expected_closure"] = prior_gdf[closure_field].apply(_normalize_closure)
+    else:
+        prior_gdf["_expected_closure"] = np.nan
+
+    if density_field and density_field in prior_gdf.columns:
+        prior_gdf["_expected_density"] = prior_gdf[density_field].apply(_safe_float)
+    elif tree_count_field and area_ha_field and tree_count_field in prior_gdf.columns and area_ha_field in prior_gdf.columns:
+        tree_count = prior_gdf[tree_count_field].apply(_safe_float)
+        area_ha = prior_gdf[area_ha_field].apply(_safe_float)
+        prior_gdf["_expected_density"] = [
+            (float(tc) / float(ah)) if tc is not None and ah not in (None, 0.0) else np.nan
+            for tc, ah in zip(tree_count, area_ha)
+        ]
+    else:
+        prior_gdf["_expected_density"] = np.nan
+
+    metric_crs = _metric_crs(prior_gdf)
+    metric_prior = prior_gdf.to_crs(metric_crs)
+    scene_profile = {
+        "crown_width_mean_m": float(np.nanmean(metric_prior["_expected_crown_width_m"])) if np.isfinite(metric_prior["_expected_crown_width_m"]).any() else None,
+        "closure_mean": float(np.nanmean(metric_prior["_expected_closure"])) if np.isfinite(metric_prior["_expected_closure"]).any() else None,
+        "density_mean": float(np.nanmean(metric_prior["_expected_density"])) if np.isfinite(metric_prior["_expected_density"]).any() else None,
+    }
+    return metric_prior, prior_id_field, scene_profile
+
+
+def _classify_prior_structure_tag(
+    *,
+    crown_width_m: float | None,
+    density_per_ha: float | None,
+    closure: float | None,
+) -> str:
+    crown = _safe_float(crown_width_m)
+    density = _safe_float(density_per_ha)
+    closure_val = _safe_float(closure)
+
+    if crown is not None and crown >= 8.0 and (density is None or density <= 700):
+        return "very_large_open"
+    if (density is not None and density >= 1600) or (closure_val is not None and closure_val >= 0.70):
+        if crown is not None and crown <= 4.5:
+            return "small_dense_closed"
+        return "dense_closed"
+    if crown is not None and crown >= 6.5:
+        return "large_open" if closure_val is not None and closure_val <= 0.55 else "large_mixed"
+    if density is not None and density <= 700:
+        return "sparse_open"
+    return "mixed_medium"
+
+
+def _aggregate_prior_profile(
+    geom_metric,
+    *,
+    prior_metric_gdf: gpd.GeoDataFrame | None,
+    prior_id_field: str | None,
+) -> dict[str, Any]:
+    area_m2 = float(geom_metric.area)
+    if prior_metric_gdf is None or not prior_id_field:
+        return {
+            "prior_overlap_ratio": 0.0,
+            "prior_xiaoban_ids": [],
+            "expected_crown_width_m": None,
+            "expected_density": None,
+            "expected_closure": None,
+            "prior_structure_tag": "unknown",
+        }
+
+    inter = prior_metric_gdf[prior_metric_gdf.geometry.intersects(geom_metric)].copy()
+    if inter.empty:
+        return {
+            "prior_overlap_ratio": 0.0,
+            "prior_xiaoban_ids": [],
+            "expected_crown_width_m": None,
+            "expected_density": None,
+            "expected_closure": None,
+            "prior_structure_tag": "unknown",
+        }
+
+    inter["overlap_area_m2"] = inter.geometry.intersection(geom_metric).area
+    inter = inter[inter["overlap_area_m2"] > 0].copy()
+    if inter.empty:
+        return {
+            "prior_overlap_ratio": 0.0,
+            "prior_xiaoban_ids": [],
+            "expected_crown_width_m": None,
+            "expected_density": None,
+            "expected_closure": None,
+            "prior_structure_tag": "unknown",
+        }
+
+    overlap_sum = float(inter["overlap_area_m2"].sum())
+    weights = inter["overlap_area_m2"] / max(overlap_sum, 1.0e-6)
+
+    def _weighted_mean(column: str) -> float | None:
+        if column not in inter.columns:
+            return None
+        vals = np.asarray(inter[column], dtype=float)
+        mask = np.isfinite(vals)
+        if not np.any(mask):
+            return None
+        return float(np.average(vals[mask], weights=np.asarray(weights[mask], dtype=float)))
+
+    crown = _weighted_mean("_expected_crown_width_m")
+    density = _weighted_mean("_expected_density")
+    closure = _weighted_mean("_expected_closure")
+    return {
+        "prior_overlap_ratio": overlap_sum / max(area_m2, 1.0e-6),
+        "prior_xiaoban_ids": sorted(inter[prior_id_field].astype(str).tolist()),
+        "expected_crown_width_m": crown,
+        "expected_density": density,
+        "expected_closure": closure,
+        "prior_structure_tag": _classify_prior_structure_tag(
+            crown_width_m=crown,
+            density_per_ha=density,
+            closure=closure,
+        ),
+    }
+
+
+def _resolve_dynamic_min_area_m2(
+    *,
+    roi_cfg: dict[str, Any],
+    prior_profile: dict[str, Any],
+    signal_profile: dict[str, float],
+) -> tuple[float, dict[str, Any]]:
+    base_min_area = float(roi_cfg.get("signal_min_area_m2", 150.0))
+    cap_min_area = float(roi_cfg.get("signal_dynamic_min_area_cap_m2", max(base_min_area * 3.0, 450.0)))
+    floor_ratio = float(roi_cfg.get("signal_dynamic_min_area_floor_ratio", 0.70))
+    crown_width = _safe_float(prior_profile.get("expected_crown_width_m"))
+    density = _safe_float(prior_profile.get("expected_density"))
+    closure = _safe_float(prior_profile.get("expected_closure"))
+    structure_tag = str(prior_profile.get("prior_structure_tag") or "unknown")
+
+    if crown_width is None or crown_width <= 0:
+        return base_min_area, {
+            "strategy": "fallback_base_min_area",
+            "structure_tag": structure_tag,
+            "expected_crown_width_m": crown_width,
+            "expected_density": density,
+            "expected_closure": closure,
+        }
+
+    crown_area = math.pi * (float(crown_width) / 2.0) ** 2
+    crown_count_floor = 3.5
+    if structure_tag in {"very_large_open", "large_open"}:
+        crown_count_floor = 3.0
+    elif structure_tag in {"small_dense_closed", "dense_closed"}:
+        crown_count_floor = 4.5
+    elif structure_tag in {"sparse_open"}:
+        crown_count_floor = 3.2
+
+    complexity_boost = 1.0
+    if float(signal_profile.get("shadow_score_mean") or 0.0) >= 0.45 or float(signal_profile.get("terrain_score_mean") or 0.0) >= 0.45:
+        complexity_boost += 0.15
+    if float(signal_profile.get("boundary_score_mean") or 0.0) >= 0.35:
+        complexity_boost += 0.10
+    if float(signal_profile.get("texture_score_mean") or 0.0) >= 0.40:
+        complexity_boost += 0.05
+
+    dynamic_area = crown_area * crown_count_floor * complexity_boost
+    resolved = max(base_min_area * floor_ratio, dynamic_area)
+    resolved = min(max(resolved, base_min_area * floor_ratio), cap_min_area)
+    return resolved, {
+        "strategy": "prior_guided_dynamic_min_area",
+        "structure_tag": structure_tag,
+        "expected_crown_width_m": crown_width,
+        "expected_density": density,
+        "expected_closure": closure,
+        "expected_crown_area_m2": crown_area,
+        "target_crown_count_floor": crown_count_floor,
+        "complexity_boost": complexity_boost,
+    }
+
+
+def _dominant_signal_profile(summary: dict[str, Any]) -> tuple[str, list[str]]:
+    signal_scores = {
+        "boundary": float(summary.get("boundary_score_mean") or 0.0),
+        "texture": float(summary.get("texture_score_mean") or 0.0),
+        "shadow": float(summary.get("shadow_score_mean") or 0.0),
+        "terrain": float(summary.get("terrain_score_mean") or 0.0),
+    }
+    ordered = sorted(signal_scores.items(), key=lambda item: item[1], reverse=True)
+    dominant_signal = ordered[0][0] if ordered else "mixed"
+    top_signals = [name for name, value in ordered if value >= max((ordered[0][1] if ordered else 0.0) * 0.80, 0.25)]
+
+    canopy_fraction = float(summary.get("canopy_fraction") or 0.0)
+    structure_tag = str(summary.get("prior_structure_tag") or "")
+    if dominant_signal in {"shadow", "terrain"}:
+        roi_signal_type = "shadow_topography"
+    elif dominant_signal == "boundary":
+        roi_signal_type = "boundary_fragmented"
+    elif dominant_signal == "texture" and canopy_fraction >= 0.60:
+        roi_signal_type = "dense_adhesion"
+    elif structure_tag in {"very_large_open", "large_open", "large_mixed"}:
+        roi_signal_type = "large_crown_complex"
+    else:
+        roi_signal_type = "mixed_complex"
+
+    signal_tags = sorted(set(top_signals + [roi_signal_type, structure_tag]))
+    return roi_signal_type, signal_tags
+
+
+def _merge_candidate_records(
+    records: list[dict[str, Any]],
+    *,
+    roi_cfg: dict[str, Any],
+    grid_crs,
+    grid_transform,
+    score_map: np.ndarray,
+    texture_map: np.ndarray,
+    shadow_map: np.ndarray,
+    terrain_map: np.ndarray,
+    boundary_map: np.ndarray,
+    canopy_map: np.ndarray,
+    prior_metric_gdf: gpd.GeoDataFrame | None,
+    prior_id_field: str | None,
+    round_idx: int,
+) -> list[dict[str, Any]]:
+    if len(records) <= 1:
+        return records
+
+    merge_distance_default = float(roi_cfg.get("signal_same_type_merge_distance_m", 8.0))
+    metric_crs = _metric_crs(gpd.GeoDataFrame({"candidate_id": [1]}, geometry=[shape({"type": "Point", "coordinates": [0, 0]})], crs=grid_crs))
+    record_geoms = []
+    for item in records:
+        geom = shape({"type": "Polygon", "coordinates": []})
+        try:
+            from shapely import wkt
+
+            geom = wkt.loads(str(item.get("geometry_wkt") or ""))
+        except Exception:
+            continue
+        if geom.is_empty:
+            continue
+        metric_geom = gpd.GeoSeries([geom], crs=grid_crs).to_crs(metric_crs).iloc[0]
+        record_geoms.append((item, metric_geom))
+    if len(record_geoms) <= 1:
+        return records
+
+    visited: set[int] = set()
+    merged: list[dict[str, Any]] = []
+    for idx, (item, geom) in enumerate(record_geoms):
+        if idx in visited:
+            continue
+        visited.add(idx)
+        component = [idx]
+        queue = [idx]
+        while queue:
+            current = queue.pop()
+            current_item, current_geom = record_geoms[current]
+            current_type = str(current_item.get("roi_signal_type") or "")
+            current_ids = set(current_item.get("prior_xiaoban_ids") or [])
+            current_merge_distance = max(
+                float(current_item.get("merge_distance_m") or merge_distance_default),
+                merge_distance_default,
+            )
+            for other_idx, (other_item, other_geom) in enumerate(record_geoms):
+                if other_idx in visited:
+                    continue
+                other_type = str(other_item.get("roi_signal_type") or "")
+                other_ids = set(other_item.get("prior_xiaoban_ids") or [])
+                if current_type and other_type and current_type != other_type and not (current_ids & other_ids):
+                    continue
+                distance_m = float(current_geom.distance(other_geom))
+                other_merge_distance = max(
+                    float(other_item.get("merge_distance_m") or merge_distance_default),
+                    merge_distance_default,
+                )
+                if distance_m <= max(current_merge_distance, other_merge_distance):
+                    visited.add(other_idx)
+                    queue.append(other_idx)
+                    component.append(other_idx)
+
+        if len(component) == 1:
+            merged.append(record_geoms[component[0]][0])
+            continue
+
+        component_items = [record_geoms[i][0] for i in component]
+        component_geoms = [record_geoms[i][1] for i in component]
+        bridge_distance = max(
+            [float(item.get("merge_distance_m") or merge_distance_default) for item in component_items] + [merge_distance_default]
+        )
+        buffered_union = unary_union([geom.buffer(bridge_distance / 2.0) for geom in component_geoms]).buffer(-bridge_distance / 2.0)
+        merged_metric_geom = buffered_union if not buffered_union.is_empty else unary_union(component_geoms)
+        merged_geom = gpd.GeoSeries([merged_metric_geom], crs=metric_crs).to_crs(grid_crs).iloc[0]
+        merged_summary = _summarize_candidate_geometry(
+            merged_geom,
+            grid_crs=grid_crs,
+            grid_transform=grid_transform,
+            score_map=score_map,
+            texture_map=texture_map,
+            shadow_map=shadow_map,
+            terrain_map=terrain_map,
+            boundary_map=boundary_map,
+            canopy_map=canopy_map,
+            prior_metric_gdf=prior_metric_gdf,
+            prior_id_field=prior_id_field,
+            roi_cfg=roi_cfg,
+        )
+        merged_summary["candidate_id"] = f"signal_roi_{round_idx:02d}_{len(merged) + 1:02d}"
+        merged_summary["merged_member_ids"] = [str(item.get("candidate_id") or "") for item in component_items]
+        merged.append(merged_summary)
+
+    return merged
+
+
+def _build_global_candidate_mask(
+    *,
+    score_map: np.ndarray,
+    valid_mask: np.ndarray,
+    top_k: int,
+    quantile: float,
+    support_quantile: float,
+    grow_radius_px: int,
+    fill_radius_px: int,
+) -> tuple[np.ndarray, list[float]]:
+    quantiles_used: list[float] = []
+    if not np.any(valid_mask):
+        return np.zeros_like(valid_mask, dtype=np.uint8), quantiles_used
+
+    union_mask = np.zeros_like(valid_mask, dtype=np.uint8)
+    for seed_q in [quantile, 0.90, 0.88, 0.85]:
+        seed_q = float(min(max(seed_q, 0.0), 0.999))
+        support_q_eff = float(min(seed_q - 0.04, support_quantile)) if seed_q > support_quantile else float(support_quantile)
+        seed_thr = float(np.nanquantile(score_map[valid_mask], seed_q))
+        support_thr = float(np.nanquantile(score_map[valid_mask], support_q_eff))
+        seed_mask = ((score_map >= seed_thr) & valid_mask).astype(np.uint8)
+        if not np.any(seed_mask):
+            continue
+        support_mask = ((score_map >= support_thr) & valid_mask).astype(np.uint8)
+        influence = (_box_mean(seed_mask.astype(np.float32), grow_radius_px) > 0.0).astype(np.uint8)
+        grown_mask = ((support_mask > 0) & (influence > 0)).astype(np.uint8)
+        if fill_radius_px > 0:
+            grown_mask = ((_box_mean(grown_mask.astype(np.float32), fill_radius_px) >= 0.10) & (support_mask > 0)).astype(np.uint8)
+        grown_mask = _keep_top_connected_components(grown_mask, max_components=max(top_k * 8, 16))
+        if np.any(grown_mask):
+            union_mask = np.maximum(union_mask, grown_mask)
+            quantiles_used.append(seed_q)
+
+    if not np.any(union_mask):
+        return union_mask, quantiles_used
+
+    union_mask = ((_box_mean(union_mask.astype(np.float32), max(1, fill_radius_px)) >= 0.08) & valid_mask).astype(np.uint8)
+    union_mask = _keep_top_connected_components(union_mask, max_components=max(top_k * 8, 16))
+    return union_mask, quantiles_used
+
+
 def _summarize_candidate_geometry(
     geom,
     *,
@@ -200,8 +597,9 @@ def _summarize_candidate_geometry(
     terrain_map: np.ndarray,
     boundary_map: np.ndarray,
     canopy_map: np.ndarray,
-    prior_gdf: gpd.GeoDataFrame | None,
+    prior_metric_gdf: gpd.GeoDataFrame | None,
     prior_id_field: str | None,
+    roi_cfg: dict[str, Any],
 ) -> dict[str, Any]:
     geom_gdf = gpd.GeoDataFrame({"candidate_id": [1]}, geometry=[geom], crs=grid_crs)
     metric_crs = _metric_crs(geom_gdf)
@@ -214,31 +612,61 @@ def _summarize_candidate_geometry(
     terrain_vals = terrain_map[mask]
     boundary_vals = boundary_map[mask]
     canopy_vals = canopy_map[mask]
-    prior_overlap_ratio = 0.0
-    prior_ids: list[str] = []
-    if prior_gdf is not None and prior_id_field:
-        metric_prior = prior_gdf.to_crs(metric_crs)
-        inter = metric_prior[metric_prior.geometry.intersects(geom_metric.geometry.iloc[0])].copy()
-        if not inter.empty:
-            inter["overlap_area_m2"] = inter.geometry.intersection(geom_metric.geometry.iloc[0]).area
-            inter = inter[inter["overlap_area_m2"] > 0]
-            if not inter.empty:
-                prior_ids = sorted(inter[prior_id_field].astype(str).tolist())
-                prior_overlap_ratio = float(inter["overlap_area_m2"].sum() / max(area_m2, 1e-6))
-    return {
-        "area_m2": area_m2,
-        "bounds": [float(v) for v in geom.bounds],
-        "score": float(np.nanmean(score_vals)) if score_vals.size else 0.0,
+    prior_profile = _aggregate_prior_profile(
+        geom_metric.geometry.iloc[0],
+        prior_metric_gdf=prior_metric_gdf,
+        prior_id_field=prior_id_field,
+    )
+    signal_profile = {
         "texture_score_mean": float(np.nanmean(texture_vals)) if texture_vals.size else 0.0,
         "shadow_score_mean": float(np.nanmean(shadow_vals)) if shadow_vals.size else 0.0,
         "terrain_score_mean": float(np.nanmean(terrain_vals)) if terrain_vals.size else 0.0,
         "boundary_score_mean": float(np.nanmean(boundary_vals)) if boundary_vals.size else 0.0,
+    }
+    dynamic_min_area_m2, dynamic_rule = _resolve_dynamic_min_area_m2(
+        roi_cfg=roi_cfg,
+        prior_profile=prior_profile,
+        signal_profile=signal_profile,
+    )
+    summary = {
+        "area_m2": area_m2,
+        "bounds": [float(v) for v in geom.bounds],
+        "score": float(np.nanmean(score_vals)) if score_vals.size else 0.0,
+        "texture_score_mean": signal_profile["texture_score_mean"],
+        "shadow_score_mean": signal_profile["shadow_score_mean"],
+        "terrain_score_mean": signal_profile["terrain_score_mean"],
+        "boundary_score_mean": signal_profile["boundary_score_mean"],
         "canopy_fraction": float(np.nanmean(canopy_vals)) if canopy_vals.size else 0.0,
-        "prior_overlap_ratio": prior_overlap_ratio,
-        "prior_xiaoban_ids": prior_ids,
+        "prior_overlap_ratio": float(prior_profile.get("prior_overlap_ratio") or 0.0),
+        "prior_xiaoban_ids": list(prior_profile.get("prior_xiaoban_ids") or []),
+        "expected_crown_width_m": prior_profile.get("expected_crown_width_m"),
+        "expected_density": prior_profile.get("expected_density"),
+        "expected_closure": prior_profile.get("expected_closure"),
+        "prior_structure_tag": str(prior_profile.get("prior_structure_tag") or "unknown"),
+        "dynamic_min_area_m2": float(dynamic_min_area_m2),
+        "dynamic_min_area_rule": dynamic_rule,
         "geometry_wkt": geom.wkt,
         "geometry_crs": str(grid_crs),
     }
+    roi_signal_type, signal_tags = _dominant_signal_profile(summary)
+    merge_distance_m = max(
+        float(roi_cfg.get("signal_same_type_merge_distance_m", 8.0)),
+        min(
+            float(roi_cfg.get("signal_same_type_merge_distance_cap_m", 14.0)),
+            max(
+                float(roi_cfg.get("signal_same_type_merge_distance_floor_m", 4.0)),
+                float(summary.get("expected_crown_width_m") or 0.0) * 0.85,
+            ),
+        ),
+    )
+    summary.update(
+        {
+            "roi_signal_type": roi_signal_type,
+            "signal_tags": signal_tags,
+            "merge_distance_m": merge_distance_m,
+        }
+    )
+    return summary
 
 
 def extract_signal_driven_roi_candidates(
@@ -253,8 +681,8 @@ def extract_signal_driven_roi_candidates(
     roi_cfg = (((base_cfg.get("ITD_agent") or {}).get("planning") or {}).get("roi_extraction") or {})
     max_dim = int(roi_cfg.get("signal_grid_max_dim", 768))
     quantile = float(roi_cfg.get("signal_score_quantile", 0.92))
-    min_area_m2 = float(roi_cfg.get("signal_min_area_m2", 150.0))
     buffer_m = float(roi_cfg.get("signal_buffer_m", roi_cfg.get("buffer_m", 5.0)))
+    support_quantile = float(roi_cfg.get("signal_support_quantile", 0.80))
     out_root = _ensure_dir(Path(base_cfg["output_dir"]) / "data_processing" / "roi_signal_candidates")
     out_prefix = out_root / f"round_{int(round_idx):02d}"
 
@@ -325,25 +753,33 @@ def extract_signal_driven_roi_candidates(
     score_map *= np.clip(0.35 + 0.65 * canopy_mask, 0.0, 1.0)
 
     valid = canopy_mask > 0
-    candidate_threshold = 1.0
-    geoms = []
-    for q in [quantile, 0.90, 0.88, 0.85, 0.80]:
-        if not np.any(valid):
-            break
-        candidate_threshold = float(np.nanquantile(score_map[valid], q))
-        candidate_mask = ((score_map >= candidate_threshold) & valid).astype(np.uint8)
-        candidate_mask = _keep_top_connected_components(candidate_mask, max_components=max(top_k * 6, 12))
-        geoms = _mask_to_geometries(candidate_mask, transform=grid_transform)
-        if geoms:
-            break
-
-    prior_gdf = None
-    prior_id_field = None
-    if base_cfg.get("xiaoban_shp") and Path(str(base_cfg["xiaoban_shp"])).exists() and base_cfg.get("xiaoban_id_field"):
-        prior_gdf = gpd.read_file(str(base_cfg["xiaoban_shp"]))
-        if prior_gdf.crs is not None:
-            prior_id_field = str(base_cfg["xiaoban_id_field"])
-            prior_gdf[prior_id_field] = prior_gdf[prior_id_field].astype(str)
+    prior_metric_gdf, prior_id_field, prior_scene_profile = _load_prior_gdf(base_cfg)
+    pixel_size_m = max(_pixel_size_m(grid_transform), 1.0e-6)
+    expected_crown_width_m = _safe_float(prior_scene_profile.get("crown_width_mean_m"))
+    expected_crown_px = (expected_crown_width_m / pixel_size_m) if expected_crown_width_m else None
+    grow_radius_px = int(
+        roi_cfg.get(
+            "signal_seed_grow_radius_px",
+            min(8, max(2, round((expected_crown_px or 10.0) * 0.25))),
+        )
+    )
+    fill_radius_px = int(
+        roi_cfg.get(
+            "signal_fill_radius_px",
+            min(5, max(1, round((expected_crown_px or 8.0) * 0.12))),
+        )
+    )
+    candidate_mask, quantiles_used = _build_global_candidate_mask(
+        score_map=score_map,
+        valid_mask=valid,
+        top_k=top_k,
+        quantile=quantile,
+        support_quantile=support_quantile,
+        grow_radius_px=grow_radius_px,
+        fill_radius_px=fill_radius_px,
+    )
+    geoms = _mask_to_geometries(candidate_mask, transform=grid_transform)
+    candidate_threshold = float(np.nanquantile(score_map[valid], quantile)) if np.any(valid) else 1.0
 
     records: list[dict[str, Any]] = []
     for idx, geom in enumerate(geoms, 1):
@@ -351,8 +787,6 @@ def extract_signal_driven_roi_candidates(
         metric_crs = _metric_crs(geom_gdf)
         geom_metric = geom_gdf.to_crs(metric_crs)
         buffered = geom_metric.geometry.iloc[0].buffer(buffer_m)
-        if float(buffered.area) < min_area_m2:
-            continue
         buffered_back = gpd.GeoSeries([buffered], crs=metric_crs).to_crs(grid_crs).iloc[0]
         summary = _summarize_candidate_geometry(
             buffered_back,
@@ -364,20 +798,41 @@ def extract_signal_driven_roi_candidates(
             terrain_map=terrain_map,
             boundary_map=boundary_map,
             canopy_map=canopy_mask,
-            prior_gdf=prior_gdf,
+            prior_metric_gdf=prior_metric_gdf,
             prior_id_field=prior_id_field,
+            roi_cfg=roi_cfg,
         )
+        if float(summary.get("area_m2") or 0.0) < float(summary.get("dynamic_min_area_m2") or 0.0):
+            continue
         summary["candidate_id"] = f"signal_roi_{round_idx:02d}_{len(records) + 1:02d}"
         records.append(summary)
 
+    records = _merge_candidate_records(
+        records,
+        roi_cfg=roi_cfg,
+        grid_crs=grid_crs,
+        grid_transform=grid_transform,
+        score_map=score_map,
+        texture_map=texture_map,
+        shadow_map=shadow_map,
+        terrain_map=terrain_map,
+        boundary_map=boundary_map,
+        canopy_map=canopy_mask,
+        prior_metric_gdf=prior_metric_gdf,
+        prior_id_field=prior_id_field,
+        round_idx=round_idx,
+    )
     records.sort(
         key=lambda item: (
             float(item.get("score") or 0.0)
-            + 0.08 * float(item.get("prior_overlap_ratio") or 0.0)
+            + 0.10 * float(item.get("prior_overlap_ratio") or 0.0)
+            + 0.06 * float(item.get("boundary_score_mean") or 0.0)
+            + 0.04 * float(item.get("terrain_score_mean") or 0.0)
         ),
         reverse=True,
     )
-    selected = records[: max(int(top_k), 0)]
+    max_keep = int(roi_cfg.get("signal_candidate_max_keep", max(top_k * 4, 8)))
+    selected = records[: max(max_keep, 0)]
     selected_ids = {item["candidate_id"] for item in selected}
 
     if records:
@@ -395,6 +850,11 @@ def extract_signal_driven_roi_candidates(
         "selected_count": len(selected),
         "selection_mode": "signal_driven",
         "candidate_threshold": candidate_threshold,
+        "signal_quantiles_used": quantiles_used,
+        "signal_support_quantile": support_quantile,
+        "signal_seed_grow_radius_px": grow_radius_px,
+        "signal_fill_radius_px": fill_radius_px,
+        "prior_scene_profile": prior_scene_profile,
         "grid_shape": [int(height), int(width)],
         "grid_crs": str(grid_crs),
         "signal_candidates": records,

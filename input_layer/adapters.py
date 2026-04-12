@@ -123,6 +123,13 @@ def _resolve_output_path(path: Any, config_dir: Path | None) -> str | None:
     return _resolve_path(path, config_dir)
 
 
+def _enforce_minimal_retention(runtime_cfg: dict[str, Any]) -> None:
+    runtime_cfg["cleanup_policy"] = "minimal"
+    runtime_cfg["keep_debug_outputs"] = False
+    runtime_cfg["keep_semantic_prior_artifacts"] = False
+    runtime_cfg["cleanup_temp_runtime"] = True
+
+
 def _default_inventory_field_mapping(cfg: dict[str, Any]) -> dict[str, str]:
     mapping = {
         "xiaoban_id": cfg.get("xiaoban_id_field"),
@@ -512,6 +519,7 @@ def normalize_agent_runtime_config(
     manifest = build_input_manifest(runtime_cfg, config_path=config_path)
 
     if "inputs" not in runtime_cfg:
+        _enforce_minimal_retention(runtime_cfg)
         runtime_cfg["_input_manifest"] = manifest.to_dict()
         runtime_cfg["_input_validation"] = manifest.validation.to_dict() if manifest.validation else None
         runtime_cfg["_prepared_input_index"] = manifest.preparation.to_dict() if manifest.preparation else None
@@ -667,7 +675,7 @@ def normalize_agent_runtime_config(
     runtime_cfg["output_dir"] = str(runtime_root_path)
     runtime_cfg["metrics_json"] = str(runtime_root_path / "evaluation_metrics.json")
     runtime_cfg["details_csv"] = str(runtime_root_path / "evaluation_details.csv")
-    runtime_cfg["cleanup_policy"] = str(_first_non_empty(outputs.get("cleanup_policy"), runtime_cfg.get("cleanup_policy"), "standard"))
+    runtime_cfg["cleanup_policy"] = str(_first_non_empty(outputs.get("cleanup_policy"), runtime_cfg.get("cleanup_policy"), "minimal"))
     runtime_cfg["cleanup_temp_runtime"] = bool(_first_non_empty(temp_runtime_cfg.get("cleanup_after_run"), True))
     runtime_cfg["use_temp_runtime"] = use_temp_runtime
 
@@ -696,4 +704,5 @@ def normalize_agent_runtime_config(
     runtime_cfg["_input_manifest"] = manifest.to_dict()
     runtime_cfg["_input_validation"] = manifest.validation.to_dict() if manifest.validation else None
     runtime_cfg["_prepared_input_index"] = manifest.preparation.to_dict() if manifest.preparation else None
+    _enforce_minimal_retention(runtime_cfg)
     return runtime_cfg, manifest

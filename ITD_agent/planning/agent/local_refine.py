@@ -1138,7 +1138,10 @@ def build_group_plan_from_roi_candidates(
     def _should_merge_same_xiaoban_groups(existing: Dict[str, Any], current: Dict[str, Any]) -> bool:
         existing_ids = sorted(set(existing.get("prior_xiaoban_ids") or existing.get("xiaoban_ids") or []))
         current_ids = sorted(set(current.get("prior_xiaoban_ids") or current.get("xiaoban_ids") or []))
-        if not existing_ids or existing_ids != current_ids:
+        existing_signal_type = str((existing.get("roi_candidate") or {}).get("roi_signal_type") or "")
+        current_signal_type = str((current.get("roi_candidate") or {}).get("roi_signal_type") or "")
+        share_prior_ids = bool(existing_ids and current_ids and set(existing_ids) & set(current_ids))
+        if existing_signal_type and current_signal_type and existing_signal_type != current_signal_type and not share_prior_ids:
             return False
 
         existing_wkt = str(existing.get("roi_geometry_wkt") or "").strip()
@@ -1157,13 +1160,20 @@ def build_group_plan_from_roi_candidates(
             return False
 
         inter_area = float(existing_geom.intersection(current_geom).area)
-        if inter_area <= 0:
-            return False
-        existing_overlap = inter_area / max(float(existing_geom.area), 1.0e-6)
-        current_overlap = inter_area / max(float(current_geom.area), 1.0e-6)
-        union_area = float(existing_geom.union(current_geom).area)
-        iou = inter_area / max(union_area, 1.0e-6)
-        return max(existing_overlap, current_overlap) >= 0.75 or iou >= 0.60
+        merge_distance_m = max(
+            float((existing.get("roi_candidate") or {}).get("merge_distance_m") or 0.0),
+            float((current.get("roi_candidate") or {}).get("merge_distance_m") or 0.0),
+            6.0,
+        )
+        geom_distance = float(existing_geom.distance(current_geom))
+        if inter_area > 0:
+            existing_overlap = inter_area / max(float(existing_geom.area), 1.0e-6)
+            current_overlap = inter_area / max(float(current_geom.area), 1.0e-6)
+            union_area = float(existing_geom.union(current_geom).area)
+            iou = inter_area / max(union_area, 1.0e-6)
+            if max(existing_overlap, current_overlap) >= 0.75 or iou >= 0.60:
+                return True
+        return share_prior_ids or geom_distance <= merge_distance_m
 
     groups: List[Dict[str, Any]] = []
     for candidate in roi_candidates:
@@ -1225,6 +1235,14 @@ def build_group_plan_from_roi_candidates(
         merged_group["members"] = merged_members
         merged_group["xiaoban_ids"] = sorted(set(preferred.get("xiaoban_ids") or secondary.get("xiaoban_ids") or []))
         merged_group["prior_xiaoban_ids"] = sorted(set(preferred.get("prior_xiaoban_ids") or secondary.get("prior_xiaoban_ids") or []))
+        preferred_geom_wkt = str(preferred.get("roi_geometry_wkt") or "").strip()
+        secondary_geom_wkt = str(secondary.get("roi_geometry_wkt") or "").strip()
+        if preferred_geom_wkt and secondary_geom_wkt:
+            try:
+                merged_geom = unary_union([shapely_wkt.loads(preferred_geom_wkt), shapely_wkt.loads(secondary_geom_wkt)])
+                merged_group["roi_geometry_wkt"] = merged_geom.wkt
+            except Exception:
+                pass
         merged_groups[existing_idx] = merged_group
 
     deduped_groups = list(merged_groups)
@@ -1382,7 +1400,7 @@ def run_local_refinement(
         bad_ids = [str(item.get("candidate_id") or f"signal_roi_{idx+1:02d}") for idx, item in enumerate(roi_candidates)]
         print(f"[local_refine] signal_roi_candidates = {bad_ids}")
         group_plan = build_group_plan_from_roi_candidates(
-            roi_candidates=roi_candidates[:top_k],
+            roi_candidates=roi_candidates,
             base_params=base_params,
             details_csv=global_details_csv,
         )
@@ -1532,9 +1550,28 @@ def main():
     parser.add_argument("--dem_tif", default=None, help="Global DEM tif for terrain-aware ROI crop.")
     parser.add_argument("--slope_tif", default=None, help="Optional precomputed slope tif.")
     parser.add_argument("--aspect_tif", default=None, help="Optional precomputed aspect tif.")
+    parser.add_argument(
+        "--roi_candidates_json",
+        default=None,
+        help="Optional JSON file containing fixed roi_candidates to reuse for refinement.",
+    )
+    parser.add_argument(
+        "--preferred_child_model",
+        default=None,
+        help="Optional child model name to force during ROI refinement.",
+    )
+    parser.add_argument(
+        "--local_refine_root",
+        default=None,
+        help="Optional output root directory for local refinement artifacts.",
+    )
     args = parser.parse_args()
 
     best_params = json.loads(args.best_params_json)
+    roi_candidates = None
+    if args.roi_candidates_json:
+        with open(args.roi_candidates_json, "r", encoding="utf-8") as f:
+            roi_candidates = json.load(f)
 
     run_local_refinement(
         base_config_path=args.base_config,
@@ -1548,6 +1585,9 @@ def main():
         dem_tif=args.dem_tif,
         slope_tif=args.slope_tif,
         aspect_tif=args.aspect_tif,
+        local_refine_root=args.local_refine_root,
+        preferred_child_model=args.preferred_child_model,
+        roi_candidates=roi_candidates,
     )
 
 

@@ -115,9 +115,17 @@ class KnowledgeProfile:
 class PublicDatasetProfile:
     source_id: str
     dataset_format: str
+    dataset_name: str | None = None
     root_path: str | None = None
     annotation_path: str | None = None
     usage_roles: list[str] = field(default_factory=list)
+    target_expert_families: list[str] = field(default_factory=list)
+    forest_types: list[str] = field(default_factory=list)
+    terrain_tags: list[str] = field(default_factory=list)
+    domain_tags: list[str] = field(default_factory=list)
+    sensor_type: str | None = None
+    resolution_range: str | None = None
+    label_quality: str | None = None
     annotation_type: str | None = None
     finetune_ready: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)

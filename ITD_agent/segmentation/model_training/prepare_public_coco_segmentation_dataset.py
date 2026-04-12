@@ -287,6 +287,110 @@ def _reindex_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(float(value))
+
+
+def _segmentation_has_valid_polygon(segmentation: Any) -> bool:
+    if not isinstance(segmentation, list) or not segmentation:
+        return False
+    for polygon in segmentation:
+        if not isinstance(polygon, list) or len(polygon) < 6 or len(polygon) % 2 != 0:
+            continue
+        if all(_is_finite_number(coord) for coord in polygon):
+            return True
+    return False
+
+
+def _sanitize_payload(
+    payload: dict[str, Any],
+    *,
+    drop_images_without_annotations: bool,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    images = [dict(image) for image in payload.get("images", [])]
+    annotations = [dict(ann) for ann in payload.get("annotations", [])]
+    categories = payload.get("categories") or [{"id": 1, "name": "crown", "supercategory": "crown"}]
+    image_id_set = {int(image["id"]) for image in images}
+
+    stats = {
+        "input_images": len(images),
+        "input_annotations": len(annotations),
+        "dropped_missing_image": 0,
+        "dropped_nonpos_bbox": 0,
+        "dropped_nonpos_area": 0,
+        "dropped_invalid_segmentation": 0,
+        "dropped_nan_inf": 0,
+        "dropped_images_without_annotations": 0,
+    }
+
+    kept_annotations: list[dict[str, Any]] = []
+    for ann in annotations:
+        image_id = int(ann.get("image_id", -1))
+        if image_id not in image_id_set:
+            stats["dropped_missing_image"] += 1
+            continue
+
+        bbox = ann.get("bbox") or []
+        area = ann.get("area")
+        segmentation = ann.get("segmentation")
+
+        numeric_values: list[float] = []
+        if isinstance(bbox, list):
+            numeric_values.extend(float(v) for v in bbox if isinstance(v, (int, float)))
+        if isinstance(area, (int, float)):
+            numeric_values.append(float(area))
+
+        if any(not math.isfinite(v) for v in numeric_values):
+            stats["dropped_nan_inf"] += 1
+            continue
+
+        if len(bbox) >= 4 and (float(bbox[2]) <= 0 or float(bbox[3]) <= 0):
+            stats["dropped_nonpos_bbox"] += 1
+            continue
+
+        if isinstance(area, (int, float)) and float(area) <= 0:
+            stats["dropped_nonpos_area"] += 1
+            continue
+
+        if not _segmentation_has_valid_polygon(segmentation):
+            stats["dropped_invalid_segmentation"] += 1
+            continue
+
+        kept_annotations.append(ann)
+
+    if drop_images_without_annotations:
+        kept_image_ids = {int(ann["image_id"]) for ann in kept_annotations}
+        kept_images = [image for image in images if int(image["id"]) in kept_image_ids]
+        stats["dropped_images_without_annotations"] = len(images) - len(kept_images)
+    else:
+        kept_images = images
+
+    sanitized = _reindex_payload(
+        {
+            "images": kept_images,
+            "annotations": kept_annotations,
+            "categories": categories,
+        }
+    )
+    stats["output_images"] = len(sanitized["images"])
+    stats["output_annotations"] = len(sanitized["annotations"])
+    return sanitized, stats
+
+
+def _load_direct_role_payload(annotation_file: Path) -> dict[str, Any]:
+    if not annotation_file.exists():
+        raise FileNotFoundError(f"直接指定的标注文件不存在: {annotation_file}")
+    with open(annotation_file, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    return _reindex_payload(
+        {
+            "images": payload.get("images", []),
+            "annotations": payload.get("annotations", []),
+            "categories": payload.get("categories") or [{"id": 1, "name": "crown", "supercategory": "crown"}],
+        }
+    )
+
+
 def _payload_subset_by_image_ids(payload: dict[str, Any], selected_image_ids: set[int]) -> dict[str, Any]:
     images = [dict(image) for image in payload.get("images", []) if int(image["id"]) in selected_image_ids]
     annotations = [
@@ -360,6 +464,11 @@ def main() -> None:
         cfg.get("public_dataset_holdout_test_source_roles"),
         [],
     )
+    direct_role_annotation_files = {
+        str(key).strip().lower(): Path(str(value)).expanduser().resolve()
+        for key, value in dict(cfg.get("public_dataset_annotation_files_by_role") or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
 
     out_dir = Path(cfg["output_dir"]) / cfg.get("segmentation_dataset_dirname", "external_segmentation_dataset")
     ann_dir = ensure_dir(out_dir / "annotations")
@@ -371,11 +480,34 @@ def main() -> None:
     }
     merged_by_role: dict[str, dict[str, Any]] = {}
     summary_roles: dict[str, Any] = {}
+    sanitize_summary: dict[str, Any] = {}
 
     for role, aliases in role_to_aliases.items():
         role_payloads: list[dict[str, Any]] = []
         role_summaries: list[dict[str, Any]] = []
         include_dataset_ids = set(_normalize_int_list(include_dataset_ids_cfg.get(role))) if isinstance(include_dataset_ids_cfg, dict) else set()
+
+        direct_annotation_file = direct_role_annotation_files.get(role)
+        if direct_annotation_file is not None:
+            direct_payload = _load_direct_role_payload(direct_annotation_file)
+            direct_payload, role_sanitize_stats = _sanitize_payload(
+                direct_payload,
+                drop_images_without_annotations=(role != "test"),
+            )
+            merged_by_role[role] = direct_payload
+            sanitize_summary[role] = role_sanitize_stats
+            summary_roles[role] = [
+                {
+                    "source": "direct_annotation_file",
+                    "annotation_file": str(direct_annotation_file),
+                    "num_images": len(direct_payload.get("images", [])),
+                    "num_annotations": len(direct_payload.get("annotations", [])),
+                }
+            ]
+            out_json = ann_dir / f"instances_{role}.json"
+            with open(out_json, "w", encoding="utf-8") as f:
+                json.dump(direct_payload, f, ensure_ascii=False, indent=2)
+            continue
 
         for alias in aliases:
             split_rel = split_mapping.get(alias)
@@ -412,7 +544,12 @@ def main() -> None:
             role_summaries.append(split_summary)
 
         merged_payload = _merge_role_payloads(role_payloads)
+        merged_payload, role_sanitize_stats = _sanitize_payload(
+            merged_payload,
+            drop_images_without_annotations=(role != "test"),
+        )
         merged_by_role[role] = merged_payload
+        sanitize_summary[role] = role_sanitize_stats
         summary_roles[role] = role_summaries
 
         out_json = ann_dir / f"instances_{role}.json"
@@ -460,6 +597,7 @@ def main() -> None:
             "test_annotations": len(merged_by_role["test"]["annotations"]),
         },
         "roles": summary_roles,
+        "sanitization": sanitize_summary,
         "holdout_test": {
             "enabled": bool(holdout_test_fraction > 0 and holdout_test_source_roles),
             "fraction": holdout_test_fraction,

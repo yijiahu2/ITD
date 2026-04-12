@@ -8,9 +8,12 @@ from ITD_agent.finetune_pool.query import load_recent_failed_cases
 from ITD_agent.llm_gateway import request_run_retrospective
 from ITD_agent.memory_store.query import load_recent_success_strategies
 from ITD_agent.orchestration.output_management import (
+    apply_persistent_retention,
+    build_retained_summary,
     cleanup_temp_runtime_dir,
     cleanup_unused_outputs,
     finalize_run_outputs,
+    get_cleanup_roots,
     keep_legacy_output_aliases,
     materialize_public_output_aliases,
     sync_runtime_artifacts_to_persistent_root,
@@ -148,6 +151,7 @@ def finalize_run_summary(
     segmentation_info: dict[str, Any],
     final_eval_info: dict[str, Any],
 ) -> dict[str, Any]:
+    cleanup_roots = get_cleanup_roots(runtime_cfg)
     summary["final_evaluation"] = evaluate_final_phase(summary, runtime_cfg=runtime_cfg)
     summary["llm_gateway"]["run_retrospective"] = request_run_retrospective(
         run_summary=summary,
@@ -231,10 +235,12 @@ def finalize_run_summary(
     if keep_legacy_output_aliases(runtime_cfg):
         copy_optional_file(summary["summary_json"], Path(summary["summary_json"]).resolve().parent / LEGACY_RUN_SUMMARY_FILENAME)
     else:
-        remove_path(legacy_summary_path)
+        remove_path(legacy_summary_path, allowed_roots=cleanup_roots)
     if keep_legacy_output_aliases(runtime_cfg) and runtime_cfg.get("keep_debug_outputs", False) and report_path:
         copy_optional_file(report_path, Path(report_path).resolve().parent / LEGACY_RUN_REPORT_FILENAME)
 
     summary["runtime_cleanup"] = cleanup_temp_runtime_dir(runtime_cfg)
+    summary["retention"] = apply_persistent_retention(summary=summary, runtime_cfg=runtime_cfg)
+    summary = build_retained_summary(summary=summary, runtime_cfg=runtime_cfg)
     save_json(summary, summary["summary_json"])
     return summary

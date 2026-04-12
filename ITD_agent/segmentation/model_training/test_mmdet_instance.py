@@ -9,7 +9,7 @@ from typing import Any
 from ITD_agent.segmentation.finetuning.io_utils import dump_json, ensure_dir, load_json, load_yaml
 from ITD_agent.segmentation.model_training.train_mmdet_instance import _resolve_training_env
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _resolve_generated_config(training_dir: Path, train_summary: dict[str, Any]) -> Path:

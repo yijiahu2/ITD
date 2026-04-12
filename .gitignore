@@ -14,7 +14,12 @@ __pycache__/
 .agents/
 .codex/
 *.pyc
-
+artifacts/
+logs/
+tmp/
+cache/
+*.pyo
+*.pyd
 *.pth
 *.pt
 *.ckpt

@@ -1,3 +1,0 @@
-F1=0.8056
-IoU=0.7789
-tree_count_error=9.99

@@ -113,7 +113,9 @@ def _compact_roi_round_summary(run_summary: dict[str, Any]) -> dict[str, Any]:
     preferred_models: list[str] = []
     for item in roi_rounds:
         preferred = (
-            ((item.get("child_model_call_plan") or {}).get("preferred_child_model"))
+            ((item.get("expert_model_call_plan") or item.get("child_model_call_plan") or {}).get("preferred_expert_model"))
+            or ((item.get("expert_model_call_plan") or item.get("child_model_call_plan") or {}).get("preferred_child_model"))
+            or ((item.get("roi_decision") or {}).get("preferred_expert_model"))
             or ((item.get("roi_decision") or {}).get("preferred_child_model"))
         )
         if preferred and preferred not in preferred_models:
@@ -123,7 +125,7 @@ def _compact_roi_round_summary(run_summary: dict[str, Any]) -> dict[str, Any]:
         "roi_round_count": int(len(roi_rounds)),
         "stopped_by": _short_text(final_decision.get("reason"), 160),
         "decision_source": final_decision.get("decision_source"),
-        "preferred_child_models": preferred_models[:3],
+        "preferred_expert_models": preferred_models[:3],
     }
 
 

@@ -530,9 +530,7 @@ def assess_input_bundle(
         issues.append("缺少 DEM，地形先验不足。")
 
     if modalities.get("inventory"):
-        strengths.append("已接入样地调查表或行业约束数据，可用于结果质量评估。")
-    else:
-        issues.append("缺少调查或行业约束数据，结果评估约束不足。")
+        strengths.append("已接入可选样地调查表或行业约束数据，可用于参考评估与报告对照。")
 
     if modalities.get("knowledge"):
         strengths.append("已接入领域知识数据，可支持先验嵌入和策略推理。")
@@ -545,9 +543,6 @@ def assess_input_bundle(
     if terrain_info.get("terrain_generated"):
         strengths.append("DEM 派生地形产品将在本次运行中自动生成。")
 
-    if not cfg.get("xiaoban_shp"):
-        issues.append("缺少行业矢量边界数据，无法稳定执行 ROI 细化。")
-
     recommended_actions: list[str] = []
     if terrain_info.get("dem_tif") and not terrain_info.get("landform_tif"):
         recommended_actions.append("优先生成坡度、坡向、坡位和地貌栅格，增强 ROI 判定依据。")
@@ -555,6 +550,8 @@ def assess_input_bundle(
         recommended_actions.append("建议补充领域知识或历史成功策略。")
     if not modalities.get("public_datasets"):
         recommended_actions.append("建议补充公开数据集来源，为后续微调池积累样本。")
+    if not modalities.get("inventory"):
+        recommended_actions.append("未提供小班/调查数据，将使用在线质量指标作为默认评估主线。")
 
     scene_analysis = _build_scene_analysis(cfg)
     image_texture_analysis = _build_image_texture_analysis(data_processing_summary)
@@ -604,6 +601,8 @@ def assess_input_bundle(
     scene_analysis["image_texture_analysis"] = image_texture_analysis
     scene_analysis["image_quality_analysis"] = image_quality_analysis
     scene_analysis["terrain_analysis"] = terrain_analysis
+    scene_analysis["online_scene_state"] = (data_processing_summary or {}).get("metadata", {}).get("online_scene_state") or {}
+    scene_analysis["online_scene_state_json"] = (data_processing_summary or {}).get("metadata", {}).get("online_scene_state_json")
     readiness_score = max(0.2, 1.0 - 0.10 * len(issues)) if issues else 1.0
 
     payload = InputAssessment(

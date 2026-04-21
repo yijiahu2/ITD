@@ -39,14 +39,19 @@ def fuse_instance_layers(
     else:
         boundary_gdf = None
 
-    merged = merge_split_instances_by_proximity(
-        merged,
-        boundary_gdf=boundary_gdf,
-        boundary_band_m=boundary_band_m,
-        merge_gap_m=0.9,
-        centroid_distance_factor=1.4,
-        max_centroid_distance_m=7.0,
-    )
+    # Without a boundary vector, scene-wide proximity merging is too aggressive and
+    # can collapse many adjacent crowns into a few large polygons. In no-xiaoban
+    # mode, only overlap dedupe should run here; ROI/expert loops handle local
+    # corrections later.
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        merged = merge_split_instances_by_proximity(
+            merged,
+            boundary_gdf=boundary_gdf,
+            boundary_band_m=boundary_band_m,
+            merge_gap_m=0.9,
+            centroid_distance_factor=1.4,
+            max_centroid_distance_m=7.0,
+        )
     deduped = dedupe_instances_by_overlap(merged, overlap_ratio_thr=overlap_ratio_thr)
 
     if boundary_gdf is not None:

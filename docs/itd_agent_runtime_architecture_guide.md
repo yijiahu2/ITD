@@ -177,7 +177,7 @@ sequenceDiagram
 - [processor.py](/home/xth/forest_agent_project/ITD_agent/data_processing/processor.py)
   - 数据处理阶段总汇总入口
   - 输出 `data_processing_summary`
-- [image_priors.py](/home/xth/forest_agent_project/ITD_agent/data_processing/image_priors.py)
+- [imagery/priors.py](/home/xth/forest_agent_project/ITD_agent/data_processing/imagery/priors.py)
   - DOM 影像画像
   - 提取分辨率、范围、纹理指标、tile 计划
   - 当前纹理指标包括：
@@ -192,15 +192,21 @@ sequenceDiagram
     - `correlation`
     - `homogeneity`
     - `idm`
-- [dem_pipeline.py](/home/xth/forest_agent_project/ITD_agent/data_processing/dem_pipeline.py)
-  - DEM 画像与和 DOM 的对齐状态判断
-- [survey_normalizer.py](/home/xth/forest_agent_project/ITD_agent/data_processing/survey_normalizer.py)
+- [imagery/quality.py](/home/xth/forest_agent_project/ITD_agent/data_processing/imagery/quality.py) / [imagery/texture.py](/home/xth/forest_agent_project/ITD_agent/data_processing/imagery/texture.py) / [imagery/tile_plan.py](/home/xth/forest_agent_project/ITD_agent/data_processing/imagery/tile_plan.py)
+  - 影像质量、纹理统计与切块计划辅助能力
+- [terrain/dem_pipeline.py](/home/xth/forest_agent_project/ITD_agent/data_processing/terrain/dem_pipeline.py)
+  - DEM 影像与 DOM 的对齐状态判断
+- [inventory/normalizer.py](/home/xth/forest_agent_project/ITD_agent/data_processing/inventory/normalizer.py)
   - 调查表 / 小班矢量字段识别与标准字段映射
-- [terrain_features.py](/home/xth/forest_agent_project/ITD_agent/data_processing/terrain_features.py)
+- [terrain/features.py](/home/xth/forest_agent_project/ITD_agent/data_processing/terrain/features.py)
   - 生成坡度、坡向、地貌、坡位等派生地形产品
-- [spatial_context.py](/home/xth/forest_agent_project/ITD_agent/data_processing/spatial_context.py)
+- [inventory/spatial_context.py](/home/xth/forest_agent_project/ITD_agent/data_processing/inventory/spatial_context.py)
   - DOM/DEM/矢量的几何裁剪、空间上下文装配
-- [roi_extractor.py](/home/xth/forest_agent_project/ITD_agent/data_processing/roi_extractor.py)
+- [knowledge/normalizer.py](/home/xth/forest_agent_project/ITD_agent/data_processing/knowledge/normalizer.py)
+  - 领域知识数据标准化
+- [public_data/indexer.py](/home/xth/forest_agent_project/ITD_agent/data_processing/public_data/indexer.py)
+  - 公开数据集索引与可用性描述
+- [roi/extractor.py](/home/xth/forest_agent_project/ITD_agent/data_processing/roi/extractor.py)
   - ROI 辅助提取逻辑
 - [fusion_postprocess.py](/home/xth/forest_agent_project/ITD_agent/data_processing/fusion_postprocess.py)
   - 结果融合、去重、边界统一
@@ -431,10 +437,31 @@ LLM 输入约束：
 | 统一主控入口 | [ITD_agent/orchestration/orchestrator.py](/home/xth/forest_agent_project/ITD_agent/orchestration/orchestrator.py) | 负责配置标准化、运行时配置落盘与主链编排 |
 | 兼容导出 | [ITD_agent/orchestrator.py](/home/xth/forest_agent_project/ITD_agent/orchestrator.py) | 历史导入路径兼容壳 |
 | LLM 网关 | [ITD_agent/llm_gateway/__init__.py](/home/xth/forest_agent_project/ITD_agent/llm_gateway/__init__.py) | 结构化决策请求 |
+| 主流程脚本 | [scripts/run_ITD_agent_experiment.py](/home/xth/forest_agent_project/scripts/run_ITD_agent_experiment.py) | 调用 `run_itd_agent(...)` 的 CLI 包装 |
 | 评估脚本 | [scripts/evaluate_reference_quality.py](/home/xth/forest_agent_project/scripts/evaluate_reference_quality.py) | 对主模型/ROI 结果做参考质量评估 |
 | 分组实验脚本 | [scripts/run_grouped_experiment.py](/home/xth/forest_agent_project/scripts/run_grouped_experiment.py) | 从脚本侧触发 grouped 推理 |
 | 分割模型列表 | [scripts/list_segmentation_models.py](/home/xth/forest_agent_project/scripts/list_segmentation_models.py) | 列出已注册分割模型 |
 | ROI 结果评估 | [scripts/evaluate_roi_refinement_result.py](/home/xth/forest_agent_project/scripts/evaluate_roi_refinement_result.py) | ROI 细化效果评估辅助脚本 |
+| 数据处理微调 | [scripts/run_finetune_pipeline.py](/home/xth/forest_agent_project/scripts/run_finetune_pipeline.py) | 串联伪标签选择、伪数据集构建、轻量训练、推理和增益评估 |
+| 公开数据微调 | [scripts/run_public_finetune_pipeline.py](/home/xth/forest_agent_project/scripts/run_public_finetune_pipeline.py) | 公开数据处理微调入口 |
+| 公开分割模型微调 | [scripts/run_public_segmentation_model_finetune_pipeline.py](/home/xth/forest_agent_project/scripts/run_public_segmentation_model_finetune_pipeline.py) | 公开实例分割模型训练、推理和增益评估入口 |
+| COCO benchmark | [scripts/benchmark_coco_instance_dataset.py](/home/xth/forest_agent_project/scripts/benchmark_coco_instance_dataset.py) | COCO 实例分割 benchmark 工具 |
+| ISPRS 专家拆分 | [scripts/prepare_isprs_itd_expert_splits.py](/home/xth/forest_agent_project/scripts/prepare_isprs_itd_expert_splits.py) | ISPRS ITD 专家训练/验证 split 准备 |
+| 专家训练配置生成 | [scripts/generate_isprs_itd_expert_training_configs.py](/home/xth/forest_agent_project/scripts/generate_isprs_itd_expert_training_configs.py) | 从专家模板生成训练配置 |
+| 专家全套运行 | [scripts/run_isprs_itd_expert_full_suite.sh](/home/xth/forest_agent_project/scripts/run_isprs_itd_expert_full_suite.sh) | shell 方式串联专家训练配置 |
+| 记忆库压缩 | [scripts/compact_memory_store.py](/home/xth/forest_agent_project/scripts/compact_memory_store.py) | 压缩 memory_store 记录并重建索引 |
+| DOM 切片 | [scripts/tile_dom_by_meters.py](/home/xth/forest_agent_project/scripts/tile_dom_by_meters.py) | 按米级窗口切分 DOM |
+
+工具目录：
+
+- [tools/runtime_cache_client.py](/home/xth/forest_agent_project/tools/runtime_cache_client.py) / [tools/runtime_cache_worker.py](/home/xth/forest_agent_project/tools/runtime_cache_worker.py)
+  - 为 grouped inference 和局部细化复用长生命周期运行时资源。
+- [tools/cached_stage_runners.py](/home/xth/forest_agent_project/tools/cached_stage_runners.py)
+  - 提供语义先验和分割阶段的进程内缓存实现。
+- [tools/process_runner.py](/home/xth/forest_agent_project/tools/process_runner.py)
+  - 子进程执行辅助。
+- [tools/stretch_tiles.py](/home/xth/forest_agent_project/tools/stretch_tiles.py)
+  - 栅格 tile 拉伸辅助工具。
 
 ## 当前实现中的关键边界
 
@@ -497,7 +524,7 @@ LLM 输入约束：
 - 模块：`evaluation_analysis.input_assessment`
 - 涉及文件：
   - [ITD_agent/evaluation_analysis/input_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/input_assessment.py)
-  - [ITD_agent/data_processing/image_priors.py](/home/xth/forest_agent_project/ITD_agent/data_processing/image_priors.py)
+  - [ITD_agent/data_processing/imagery/priors.py](/home/xth/forest_agent_project/ITD_agent/data_processing/imagery/priors.py)
   - [ITD_agent/memory_store/query.py](/home/xth/forest_agent_project/ITD_agent/memory_store/query.py)
   - [ITD_agent/planning/scheduler/context_builder.py](/home/xth/forest_agent_project/ITD_agent/planning/scheduler/context_builder.py)
   - [ITD_agent/planning/scheduler/adaptive_config_generator.py](/home/xth/forest_agent_project/ITD_agent/planning/scheduler/adaptive_config_generator.py)

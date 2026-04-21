@@ -208,6 +208,52 @@ def validate_input_manifest(manifest: InputManifest) -> ValidationReport:
                 path=item.path,
             )
 
+    for item in manifest.canopy_height:
+        if not _path_exists(item.path):
+            level = "error" if item.required else "warning"
+            _add_issue(
+                issues,
+                level=level,
+                code="missing_path",
+                source_type="canopy_height",
+                source_id=item.id,
+                message="CHM 路径不存在。",
+                path=item.path,
+            )
+        if _suffix(item.path) not in RASTER_SUFFIXES:
+            _add_issue(
+                issues,
+                level="warning",
+                code="unexpected_suffix",
+                source_type="canopy_height",
+                source_id=item.id,
+                message="CHM 后缀不在常用栅格格式列表中。",
+                path=item.path,
+            )
+
+    for item in manifest.surface_models:
+        if not _path_exists(item.path):
+            level = "error" if item.required else "warning"
+            _add_issue(
+                issues,
+                level=level,
+                code="missing_path",
+                source_type="surface_model",
+                source_id=item.id,
+                message="DSM 路径不存在。",
+                path=item.path,
+            )
+        if _suffix(item.path) not in RASTER_SUFFIXES:
+            _add_issue(
+                issues,
+                level="warning",
+                code="unexpected_suffix",
+                source_type="surface_model",
+                source_id=item.id,
+                message="DSM 后缀不在常用栅格格式列表中。",
+                path=item.path,
+            )
+
     for item in manifest.survey_tables:
         if not _path_exists(item.path):
             level = "error" if item.required else "warning"

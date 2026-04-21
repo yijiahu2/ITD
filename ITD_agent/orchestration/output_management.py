@@ -450,6 +450,9 @@ def finalize_run_outputs(
     details_csv = summary.get("details_csv") or (summary.get("evaluation") or {}).get("details_csv")
     summary_json = summary.get("summary_json")
     inst_shp = _resolve_inst_shp(summary)
+    data_processing = summary.get("data_processing") or {}
+    semantic_prior_tif = data_processing.get("m_sem_tif")
+    semantic_prior_png = data_processing.get("m_sem_png")
 
     default_publish_root = get_persistent_output_dir(runtime_cfg) / "final_outputs"
     publish_dir = Path(publish_root) if publish_root is not None else default_publish_root
@@ -459,6 +462,8 @@ def finalize_run_outputs(
     deliverables = publish_segmentation_deliverables(
         inst_shp=inst_shp,
         publish_root=publish_dir,
+        semantic_prior_tif=semantic_prior_tif,
+        semantic_prior_png=semantic_prior_png,
         report_path=report_path,
         report_json_path=report_json_path,
         metrics_json=metrics_json,
@@ -472,6 +477,8 @@ def finalize_run_outputs(
         publish_root=str(publish_dir),
         tree_crowns_shp=deliverables.get("tree_crowns_shp"),
         tree_points_shp=deliverables.get("tree_points_shp"),
+        semantic_prior_tif=deliverables.get("semantic_prior_tif"),
+        semantic_prior_png=deliverables.get("semantic_prior_png"),
         segmentation_visualization_png=deliverables.get("segmentation_visualization_png"),
         final_evaluation_report_md=deliverables.get("final_evaluation_report_md"),
         final_evaluation_report_json=deliverables.get("final_evaluation_report_json"),

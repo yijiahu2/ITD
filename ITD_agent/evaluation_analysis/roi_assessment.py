@@ -8,7 +8,7 @@ from ITD_agent.llm_gateway import request_roi_candidate_selection
 
 from .contracts import ROIAssessment
 from .detail_ranker import summarize_details_csv
-from .reference_quality_engine import score_reference_metrics
+from .reference_quality_engine import build_reference_score_breakdown, score_reference_metrics
 
 
 def _normalize_bool(v: Any) -> bool:
@@ -42,6 +42,31 @@ def _candidate_priority_score(candidate: dict[str, Any]) -> float:
     boundary = float(candidate.get("boundary_score_mean") or 0.0)
     terrain = float(candidate.get("terrain_score_mean") or 0.0)
     return score + 0.08 * prior_overlap + 0.05 * boundary + 0.03 * terrain
+
+
+def _resolve_metric_thresholds(
+    cfg: dict[str, Any],
+    *,
+    metrics: dict[str, Any],
+    round_idx: int,
+) -> dict[str, float]:
+    roi_cfg = get_roi_refine_block(cfg)
+    tree_error = float(metrics.get("tree_count_error_ratio") or 0.0)
+    defaults = {
+        "tree_count_error_ratio": 0.18 if tree_error <= 0.12 else 0.10,
+        "mean_crown_width_error_ratio": 0.12 if tree_error <= 0.12 else 0.18,
+        "closure_error_abs": 0.06 if tree_error <= 0.12 else 0.10,
+    }
+    if round_idx > 0:
+        defaults["mean_crown_width_error_ratio"] = max(defaults["mean_crown_width_error_ratio"] - 0.01, 0.08)
+        defaults["closure_error_abs"] = max(defaults["closure_error_abs"] - 0.01, 0.04)
+
+    resolved: dict[str, float] = {}
+    for key, default_value in defaults.items():
+        raw = roi_cfg.get(key)
+        value = float(raw) if raw not in (None, "") else None
+        resolved[key] = default_value if value is None or value <= 0 else value
+    return resolved
 
 
 def _prune_candidate_rois(candidate_rois: list[dict[str, Any]], roi_cfg: dict[str, Any], top_k: int) -> list[dict[str, Any]]:
@@ -142,11 +167,13 @@ def build_roi_assessment(
     min_problem_cases = int(roi_cfg.get("min_problem_cases", 1))
     improvement_epsilon = float(roi_cfg.get("improvement_epsilon", 0.01))
     use_llm = _normalize_bool(roi_cfg.get("use_llm", True))
+    metric_thresholds = _resolve_metric_thresholds(cfg, metrics=metrics, round_idx=round_idx)
 
     tree_ratio = float(metrics.get("tree_count_error_ratio") or 0.0)
     crown_ratio = float(metrics.get("mean_crown_width_error_ratio") or 0.0)
     closure_abs = float(metrics.get("closure_error_abs") or 0.0)
-    current_score = score_reference_metrics(metrics)
+    score_breakdown = build_reference_score_breakdown(metrics, cfg=cfg)
+    current_score = score_breakdown.get("score")
     details_summary = summarize_details_csv(details_csv, top_k=top_k, cfg=cfg)
     top_cases = details_summary.get("top_k_xiaoban") or []
 
@@ -192,11 +219,11 @@ def build_roi_assessment(
         candidate_rois = top_cases
 
     triggers: list[str] = []
-    if tree_ratio >= float(roi_cfg.get("tree_count_error_ratio_thr", 0.18)):
+    if tree_ratio >= metric_thresholds["tree_count_error_ratio"]:
         triggers.append("tree_count_error_ratio")
-    if crown_ratio >= float(roi_cfg.get("mean_crown_width_error_ratio_thr", 0.22)):
+    if crown_ratio >= metric_thresholds["mean_crown_width_error_ratio"]:
         triggers.append("mean_crown_width_error_ratio")
-    if closure_abs >= float(roi_cfg.get("closure_error_abs_thr", 0.10)):
+    if closure_abs >= metric_thresholds["closure_error_abs"]:
         triggers.append("closure_error_abs")
     if len(candidate_rois) >= 1:
         triggers.append("problem_roi_cases")
@@ -236,6 +263,8 @@ def build_roi_assessment(
             "min_problem_cases": min_problem_cases,
             "improvement_epsilon": improvement_epsilon,
             "heuristic_continue": heuristic_continue,
+            "metric_thresholds": metric_thresholds,
+            "score_breakdown": score_breakdown,
             "candidate_source": "signal_driven" if signal_roi_summary.get("selected_candidates") else "inventory_detail_fallback",
             "signal_roi_summary": signal_roi_summary,
         }
@@ -276,7 +305,7 @@ def decide_roi_continuation(
             "continue_refinement": bool(llm_output.get("continue_refinement")),
             "decision_source": "llm",
             "reason": str(llm_output.get("reason") or ""),
-            "preferred_child_model": llm_output.get("preferred_child_model"),
+            "preferred_expert_model": llm_output.get("preferred_expert_model") or llm_output.get("preferred_child_model"),
             "llm_output": llm_output,
             "llm_gateway_result": llm_response,
             "decision_guard_reason": llm_guard_reason,

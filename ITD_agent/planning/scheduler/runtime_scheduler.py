@@ -6,8 +6,9 @@ from typing import Any
 
 from ITD_agent.config_adapter import load_raw_yaml, load_runtime_config, save_runtime_config
 from ITD_agent.finetune_pool.policy import infer_failure_category
+from ITD_agent.model_roles import EXPERT_MODEL_ROLE, MAIN_MODEL_ROLE, normalize_model_role
 from ITD_agent.planning.contracts import (
-    ChildModelCallPlan,
+    ExpertModelCallPlan,
     FinetuneTrainingPlan,
     KnowledgeEmbeddingPlan,
     PlanningDecision,
@@ -55,7 +56,8 @@ def _get_adaptive_generation_block(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _get_child_model_routing_block(cfg: dict[str, Any]) -> dict[str, Any]:
-    return (_get_planning_block(cfg).get("child_model_routing") or {})
+    planning_cfg = _get_planning_block(cfg)
+    return (planning_cfg.get("expert_model_routing") or planning_cfg.get("child_model_routing") or {})
 
 
 def _get_pipeline_block(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -129,7 +131,7 @@ def _get_model_entry_name(entry: dict[str, Any]) -> str | None:
 def _extract_child_model_entries(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     seg_models = _get_segmentation_models_block(cfg)
     entries: list[dict[str, Any]] = []
-    for key in ["child_models", "expert_models", "sub_models"]:
+    for key in ["expert_models", "child_models", "sub_models"]:
         block = seg_models.get(key)
         if isinstance(block, list):
             entries.extend(item for item in block if isinstance(item, dict))
@@ -138,7 +140,7 @@ def _extract_child_model_entries(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     return entries
 
 
-def _get_candidate_child_models(cfg: dict[str, Any], scheduler_context: dict[str, Any]) -> list[str]:
+def _get_candidate_expert_models(cfg: dict[str, Any], scheduler_context: dict[str, Any]) -> list[str]:
     candidates: list[str] = []
     for item in _extract_child_model_entries(cfg):
         name = _get_model_entry_name(item)
@@ -564,7 +566,7 @@ def _accept_preferred_expert_family(
     )
 
 
-def _accept_preferred_child_model(
+def _accept_preferred_expert_model(
     preferred_name: str | None,
     profiles: list[dict[str, Any]],
     *,
@@ -612,21 +614,29 @@ def _resolve_preferred_expert_route(
     family_profiles = _build_expert_family_profiles(runtime_cfg, scheduler_context, profiles)
     by_name = {_normalize_tag(item.get("name")): item for item in profiles if item.get("name")}
 
-    child_plan = (llm_result or {}).get("child_model_call_plan") or {}
+    expert_plan = (llm_result or {}).get("expert_model_call_plan") or (llm_result or {}).get("child_model_call_plan") or {}
     roi_plan = (llm_result or {}).get("roi_refine_plan") or {}
     roi_decision = ((scheduler_context.get("roi_assessment") or {}).get("decision") or {})
 
-    llm_preferred_child = str(child_plan.get("preferred_child_model") or "").strip()
-    roi_preferred_child = str(roi_decision.get("preferred_child_model") or "").strip()
+    llm_preferred_expert_model = str(
+        expert_plan.get("preferred_expert_model")
+        or expert_plan.get("preferred_child_model")
+        or ""
+    ).strip()
+    roi_preferred_expert_model = str(
+        roi_decision.get("preferred_expert_model")
+        or roi_decision.get("preferred_child_model")
+        or ""
+    ).strip()
     llm_preferred_family = str(
-        child_plan.get("preferred_expert_family")
+        expert_plan.get("preferred_expert_family")
         or roi_plan.get("preferred_expert_family")
-        or ((by_name.get(_normalize_tag(llm_preferred_child)) or {}).get("expert_family"))
+        or ((by_name.get(_normalize_tag(llm_preferred_expert_model)) or {}).get("expert_family"))
         or ""
     ).strip()
     roi_preferred_family = str(
         roi_decision.get("preferred_expert_family")
-        or ((by_name.get(_normalize_tag(roi_preferred_child)) or {}).get("expert_family"))
+        or ((by_name.get(_normalize_tag(roi_preferred_expert_model)) or {}).get("expert_family"))
         or ""
     ).strip()
 
@@ -652,26 +662,26 @@ def _resolve_preferred_expert_route(
     family_candidates = list((selected_family_profile or {}).get("candidate_profiles") or [])
 
     child_reason = None
-    preferred_child = None
-    accepted_name, child_reason = _accept_preferred_child_model(llm_preferred_child, family_candidates, source="LLM")
+    preferred_expert_model = None
+    accepted_name, child_reason = _accept_preferred_expert_model(llm_preferred_expert_model, family_candidates, source="LLM")
     if accepted_name:
-        preferred_child = accepted_name
+        preferred_expert_model = accepted_name
     else:
-        accepted_name, roi_child_reason = _accept_preferred_child_model(roi_preferred_child, family_candidates, source="ROI 决策")
+        accepted_name, roi_child_reason = _accept_preferred_expert_model(roi_preferred_expert_model, family_candidates, source="ROI 决策")
         if accepted_name:
-            preferred_child = accepted_name
+            preferred_expert_model = accepted_name
             child_reason = roi_child_reason
         elif family_candidates:
-            preferred_child = str(family_candidates[0].get("name") or "")
+            preferred_expert_model = str(family_candidates[0].get("name") or "")
             rejected_reasons = [reason for reason in [child_reason, roi_child_reason if 'roi_child_reason' in locals() else None] if reason]
-            child_reason = "；".join(rejected_reasons + [f"回退到家族内最优模板: {preferred_child}"]).strip("；")
+            child_reason = "；".join(rejected_reasons + [f"回退到家族内最优模板: {preferred_expert_model}"]).strip("；")
 
-    if not preferred_child and profiles:
-        preferred_child = str(profiles[0].get("name") or "")
+    if not preferred_expert_model and profiles:
+        preferred_expert_model = str(profiles[0].get("name") or "")
     if not selected_family:
-        selected_family = str(((by_name.get(_normalize_tag(preferred_child)) or {}).get("expert_family")) or "")
+        selected_family = str(((by_name.get(_normalize_tag(preferred_expert_model)) or {}).get("expert_family")) or "")
 
-    preferred_profile = by_name.get(_normalize_tag(preferred_child)) or {}
+    preferred_profile = by_name.get(_normalize_tag(preferred_expert_model)) or {}
     selection_reason_parts = [
         reason
         for reason in [
@@ -690,10 +700,10 @@ def _resolve_preferred_expert_route(
 
     return {
         "preferred_expert_family": selected_family or None,
-        "preferred_child_model": preferred_child or None,
+        "preferred_expert_model": preferred_expert_model or None,
         "family_profiles": family_profiles,
         "candidate_expert_families": [str(item.get("family_id")) for item in family_profiles if item.get("family_id")],
-        "candidate_child_models": candidate_models,
+        "candidate_expert_models": candidate_models,
         "candidate_profiles": family_candidates or profiles,
         "global_candidate_profiles": profiles,
         "preferred_profile": preferred_profile,
@@ -724,10 +734,10 @@ def _build_roi_refine_plan(
         llm_result=llm_result,
     )
     preferred_expert_family = route.get("preferred_expert_family")
-    preferred_child_model = route.get("preferred_child_model")
+    preferred_expert_model = route.get("preferred_expert_model")
     ranked_profiles = route.get("candidate_profiles") or []
     selection_reason = str(route.get("selection_reason") or "")
-    candidates = list(route.get("candidate_child_models") or []) or _get_candidate_child_models(runtime_cfg, scheduler_context)
+    candidates = list(route.get("candidate_expert_models") or []) or _get_candidate_expert_models(runtime_cfg, scheduler_context)
     candidate_families = list(route.get("candidate_expert_families") or [])
     selection_rules = _as_str_list(llm_plan.get("selection_rules")) or [
         "优先选择综合质量分数最低且多轮未收敛的 ROI。",
@@ -740,29 +750,29 @@ def _build_roi_refine_plan(
         "超过最大 ROI 轮次后停止。",
     ]
     return ROIRefinePlan(
-        enabled=_normalize_bool(roi_cfg.get("enabled", planning_stage == "child_model")),
+        enabled=_normalize_bool(roi_cfg.get("enabled", planning_stage == EXPERT_MODEL_ROLE)),
         use_llm=_normalize_bool(roi_cfg.get("use_llm", True)),
         max_rounds=effective_max_rounds,
         top_k=int(llm_plan.get("top_k", roi_cfg.get("top_k", 3))),
         buffer_m=float(llm_plan.get("buffer_m", roi_cfg.get("buffer_m", 5.0))),
         strategy_mode=str(llm_plan.get("strategy_mode", roi_cfg.get("strategy_mode", "auto"))),
         preferred_expert_family=str(preferred_expert_family) if preferred_expert_family else None,
-        preferred_child_model=str(preferred_child_model) if preferred_child_model else None,
+        preferred_expert_model=str(preferred_expert_model) if preferred_expert_model else None,
         candidate_expert_families=candidate_families,
-        candidate_child_models=candidates,
+        candidate_expert_models=candidates,
         selection_rules=selection_rules + ([f"默认模板选择依据: {selection_reason}"] if selection_reason else []),
         stop_rules=stop_rules,
     ).to_dict()
 
 
-def _build_child_model_call_plan(
+def _build_expert_model_call_plan(
     *,
     runtime_cfg: dict[str, Any],
     scheduler_context: dict[str, Any],
     llm_result: dict[str, Any] | None,
     planning_stage: str,
 ) -> dict[str, Any]:
-    llm_plan = (llm_result or {}).get("child_model_call_plan") or {}
+    llm_plan = (llm_result or {}).get("expert_model_call_plan") or (llm_result or {}).get("child_model_call_plan") or {}
     routing_context = _build_child_model_routing_context(scheduler_context)
     route = _resolve_preferred_expert_route(
         runtime_cfg=runtime_cfg,
@@ -770,11 +780,11 @@ def _build_child_model_call_plan(
         llm_result=llm_result,
     )
     preferred_expert_family = route.get("preferred_expert_family")
-    preferred_child_model = route.get("preferred_child_model")
+    preferred_expert_model = route.get("preferred_expert_model")
     ranked_profiles = route.get("candidate_profiles") or []
     family_profiles = route.get("family_profiles") or []
     selection_reason = str(route.get("selection_reason") or "")
-    candidates = list(route.get("candidate_child_models") or []) or _get_candidate_child_models(runtime_cfg, scheduler_context)
+    candidates = list(route.get("candidate_expert_models") or []) or _get_candidate_expert_models(runtime_cfg, scheduler_context)
     candidate_families = list(route.get("candidate_expert_families") or [])
     routing_rules = _as_str_list(llm_plan.get("routing_rules")) or [
         "先做专家家族一级路由，按失败模式、地形标签、林分标签和误差模式筛出最合适的专家家族。",
@@ -787,12 +797,12 @@ def _build_child_model_call_plan(
         "无可用子模型或 ROI 信息不足时返回主模型结果并停止细化。",
     ]
     routing_mode = str(llm_plan.get("routing_mode") or ("two_stage_family_routing" if ranked_profiles else "roi_quality_driven"))
-    plan = ChildModelCallPlan(
-        enabled=planning_stage == "child_model",
+    plan = ExpertModelCallPlan(
+        enabled=planning_stage == EXPERT_MODEL_ROLE,
         planning_stage=planning_stage,
         routing_mode=routing_mode,
         preferred_expert_family=str(preferred_expert_family) if preferred_expert_family else None,
-        preferred_child_model=str(preferred_child_model) if preferred_child_model else None,
+        preferred_expert_model=str(preferred_expert_model) if preferred_expert_model else None,
         candidate_expert_families=candidate_families,
         candidate_models=_as_str_list(llm_plan.get("candidate_models")) or candidates,
         routing_rules=routing_rules,
@@ -941,8 +951,9 @@ def build_finetune_training_plan(
     target_model_role = str(
         llm_plan.get("target_model_role")
         or recommendation.get("target_model_role")
-        or ("child_model" if preferred_profile else "main_model")
+        or (EXPERT_MODEL_ROLE if preferred_profile else MAIN_MODEL_ROLE)
     )
+    target_model_role = normalize_model_role(target_model_role, default=MAIN_MODEL_ROLE)
     target_expert_family = str(
         llm_plan.get("target_expert_family")
         or recommendation.get("target_expert_family")
@@ -1113,7 +1124,7 @@ def plan_runtime_config(
             llm_result=None,
             planning_stage=planning_stage,
         )
-        child_model_call_plan = _build_child_model_call_plan(
+        expert_model_call_plan = _build_expert_model_call_plan(
             runtime_cfg=planned_cfg,
             scheduler_context=scheduler_context,
             llm_result=None,
@@ -1133,7 +1144,7 @@ def plan_runtime_config(
             effective_runtime_cfg=planned_cfg,
             runtime_plan=runtime_plan,
             roi_refine_plan=roi_refine_plan,
-            child_model_call_plan=child_model_call_plan,
+            expert_model_call_plan=expert_model_call_plan,
             knowledge_embedding_plan=knowledge_embedding_plan,
             pilot_search_result={},
         ).to_dict()
@@ -1162,7 +1173,7 @@ def plan_runtime_config(
         llm_result=llm_result,
         planning_stage=planning_stage,
     )
-    child_model_call_plan = _build_child_model_call_plan(
+    expert_model_call_plan = _build_expert_model_call_plan(
         runtime_cfg=planned_cfg,
         scheduler_context=scheduler_context,
         llm_result=llm_result,
@@ -1186,7 +1197,7 @@ def plan_runtime_config(
         effective_runtime_cfg=planned_cfg,
         runtime_plan=runtime_plan,
         roi_refine_plan=roi_refine_plan,
-        child_model_call_plan=child_model_call_plan,
+        expert_model_call_plan=expert_model_call_plan,
         knowledge_embedding_plan=knowledge_embedding_plan,
         pilot_search_result=planning_result.get("pilot_search_result") or {},
     ).to_dict()
@@ -1215,7 +1226,7 @@ def build_main_model_planning_runtime_cfg(
     return plan_cfg
 
 
-def build_child_model_planning_runtime_cfg(
+def build_expert_model_planning_runtime_cfg(
     *,
     cfg: dict[str, Any],
     input_assessment: dict[str, Any],
@@ -1225,10 +1236,29 @@ def build_child_model_planning_runtime_cfg(
     previous_round_summary: dict[str, Any],
 ) -> dict[str, Any]:
     plan_cfg = dict(cfg)
-    plan_cfg["_planning_stage"] = "child_model"
+    plan_cfg["_planning_stage"] = EXPERT_MODEL_ROLE
     plan_cfg["_input_assessment"] = input_assessment
     plan_cfg["_input_manifest"] = input_manifest
     plan_cfg["_data_processing_summary"] = data_processing_summary
     plan_cfg["_roi_assessment"] = roi_assessment
     plan_cfg["_previous_round_summary"] = previous_round_summary
     return plan_cfg
+
+
+def build_child_model_planning_runtime_cfg(
+    *,
+    cfg: dict[str, Any],
+    input_assessment: dict[str, Any],
+    input_manifest: dict[str, Any],
+    data_processing_summary: dict[str, Any],
+    roi_assessment: dict[str, Any],
+    previous_round_summary: dict[str, Any],
+) -> dict[str, Any]:
+    return build_expert_model_planning_runtime_cfg(
+        cfg=cfg,
+        input_assessment=input_assessment,
+        input_manifest=input_manifest,
+        data_processing_summary=data_processing_summary,
+        roi_assessment=roi_assessment,
+        previous_round_summary=previous_round_summary,
+    )

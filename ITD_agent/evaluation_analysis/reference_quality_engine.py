@@ -24,14 +24,92 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
-def score_reference_metrics(metrics: dict[str, Any]) -> float | None:
+DEFAULT_SCORE_WEIGHTS = {
+    "tree_count_error_ratio": 0.30,
+    "mean_crown_width_error_ratio": 0.40,
+    "closure_error_abs": 0.20,
+    "density_error_ratio": 0.10,
+}
+
+BOUNDARY_FOCUSED_SCORE_WEIGHTS = {
+    "tree_count_error_ratio": 0.15,
+    "mean_crown_width_error_ratio": 0.55,
+    "closure_error_abs": 0.20,
+    "density_error_ratio": 0.10,
+}
+
+
+def _get_roi_refine_block(cfg: dict[str, Any] | None) -> dict[str, Any]:
+    planning_cfg = (((cfg or {}).get("ITD_agent") or {}).get("planning") or {})
+    roi_cfg = planning_cfg.get("roi_extraction")
+    if isinstance(roi_cfg, dict):
+        return roi_cfg
+    roi_cfg = planning_cfg.get("roi_refine")
+    return roi_cfg if isinstance(roi_cfg, dict) else {}
+
+
+def _normalize_weight_map(raw: dict[str, Any], defaults: dict[str, float]) -> dict[str, float]:
+    weights: dict[str, float] = {}
+    for key, default_value in defaults.items():
+        value = _safe_float((raw or {}).get(key))
+        weights[key] = max(float(value if value is not None else default_value), 0.0)
+    total = sum(weights.values())
+    if total <= 0:
+        return dict(defaults)
+    return {key: value / total for key, value in weights.items()}
+
+
+def build_reference_score_breakdown(
+    metrics: dict[str, Any],
+    *,
+    cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     tree = _safe_float(metrics.get("tree_count_error_ratio"))
     crown = _safe_float(metrics.get("mean_crown_width_error_ratio"))
     closure = _safe_float(metrics.get("closure_error_abs"))
-    density = _safe_float(metrics.get("density_error_abs"))
+    density_abs = _safe_float(metrics.get("density_error_abs"))
+    expected_density = _safe_float(metrics.get("expected_density"))
     if tree is None or crown is None or closure is None:
-        return None
-    return tree + crown + closure + (density or 0.0) / 1000.0
+        return {
+            "score": None,
+            "weights": dict(DEFAULT_SCORE_WEIGHTS),
+            "normalized_metrics": {},
+            "focus_mode": "incomplete_metrics",
+        }
+
+    density_ratio = None
+    if density_abs is not None:
+        if expected_density is not None and expected_density > 0:
+            density_ratio = density_abs / expected_density
+        else:
+            density_ratio = density_abs / 1000.0
+
+    focus_mode = "balanced"
+    default_weights = DEFAULT_SCORE_WEIGHTS
+    if tree <= 0.12:
+        focus_mode = "boundary_priority"
+        default_weights = BOUNDARY_FOCUSED_SCORE_WEIGHTS
+
+    roi_cfg = _get_roi_refine_block(cfg)
+    weights = _normalize_weight_map(roi_cfg.get("score_weights") or {}, default_weights)
+    normalized_metrics = {
+        "tree_count_error_ratio": float(tree),
+        "mean_crown_width_error_ratio": float(crown),
+        "closure_error_abs": float(closure),
+        "density_error_ratio": float(max(density_ratio or 0.0, 0.0)),
+    }
+    score = sum(normalized_metrics[key] * weights[key] for key in weights)
+    return {
+        "score": float(score),
+        "weights": weights,
+        "normalized_metrics": normalized_metrics,
+        "focus_mode": focus_mode,
+    }
+
+
+def score_reference_metrics(metrics: dict[str, Any], *, cfg: dict[str, Any] | None = None) -> float | None:
+    breakdown = build_reference_score_breakdown(metrics, cfg=cfg)
+    return breakdown.get("score")
 
 
 def evaluate_reference_quality(
@@ -110,10 +188,11 @@ def evaluate_reference_quality(
         details_csv=str(details_csv),
         metrics=metrics,
         detail_summary=detail_summary,
-        quality_score=score_reference_metrics(metrics),
+        quality_score=score_reference_metrics(metrics, cfg=cfg),
         terrain_error_summary=metrics.get("terrain_stratified_error_summary") or {},
     )
     result_dict = payload.to_dict()
     result_dict["cmd"] = cmd
     result_dict["terrain_info"] = terrain_info
+    result_dict["score_breakdown"] = build_reference_score_breakdown(metrics, cfg=cfg)
     return result_dict

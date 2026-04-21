@@ -3,6 +3,7 @@ from __future__ import annotations
 from input_layer.contracts import InputManifest
 
 from ITD_agent.data_processing.contracts import PublicDatasetProfile
+from ITD_agent.model_roles import EXPERT_MODEL_ROLE
 from ITD_agent.planning.scheduler.expert_taxonomy import infer_domain_tags, infer_target_expert_families
 
 
@@ -17,9 +18,9 @@ def _infer_usage_roles(item) -> list[str]:
         if role_str in {"main", "main_model", "primary"}:
             roles.append("main_model")
         elif role_str in {"child", "child_model", "expert", "sub"}:
-            roles.append("child_model")
+            roles.append(EXPERT_MODEL_ROLE)
     if not roles:
-        roles = ["main_model", "child_model"]
+        roles = ["main_model", EXPERT_MODEL_ROLE]
     return roles
 
 

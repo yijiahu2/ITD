@@ -10,6 +10,7 @@ runtime:
   conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
   conda_env: tcd
   work_dir: /home/xth/tcd/test_prediction
+  use_runtime_cache_worker: true
   xiaoban_id_field: XBH
   tree_count_field: LMSL
   crown_field: PJGF
@@ -88,7 +89,7 @@ ITD_agent:
       signal_same_type_merge_distance_m: 8.0
       signal_same_type_merge_distance_floor_m: 4.0
       signal_same_type_merge_distance_cap_m: 14.0
-    child_model_routing:
+    expert_model_routing:
       family_score_scale: 100.0
       model_score_scale: 100.0
       family_weights:
@@ -118,7 +119,7 @@ ITD_agent:
     main_model:
       name: legacy_cellpose_sam
       script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-    child_models:
+    expert_models:
       - name: dense_canopy_template
         algorithm: mmdet_htc
         description: 面向密闭林冠、粘连严重 ROI 的 HTC 专家模型。
@@ -211,6 +212,31 @@ ITD_agent:
           bsize: 256
           augment: false
           iou_merge_thr: 0.24
+      - name: boundary_calibration_template
+        algorithm: mmdet_mask_scoring_rcnn
+        description: 面向计数已稳定但冠缘和边界质量仍不足 ROI 的边界校准专家模型。
+        scene_tags: [boundary, contour, edge, dense_mixed]
+        terrain_tags: [gentle, moderate]
+        failure_categories: [crown_boundary_fragmented, boundary_score_mismatch, crown_overlap_conflict]
+        target_error_patterns: [crown, closure_low]
+        routing_priority: 80
+        algorithm_cfg:
+          tile_size: 1536
+          tile_overlap: 256
+          tile_batch_size: 1
+          merge_iou_thr: 0.42
+          score_thr: 0.20
+          min_area_px: 80
+        runtime_overrides:
+          diam_list: "160,224"
+          tile: 1792
+          overlap: 256
+          tile_overlap: 0.2
+          bsize: 256
+          augment: false
+          iou_merge_thr: 0.35
+  runtime_cache_worker:
+    enabled: true
   memory:
     enabled: true
   finetune_pool:

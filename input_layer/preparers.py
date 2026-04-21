@@ -98,6 +98,43 @@ def build_prepared_input_index(
             )
         )
 
+    for item in manifest.canopy_height:
+        assets.append(
+            PreparedAsset(
+                source_type="canopy_height",
+                source_id=item.id,
+                raw_path=item.path,
+                prepared_path=_prepared_path(prepared_root, "canopy_height", item.id, item.path),
+                registry_key=f"canopy_height/{item.id}",
+                preparation_actions=[
+                    "validate_readability",
+                    "reproject_if_needed",
+                    "align_to_reference_grid",
+                    "extract_height_distribution",
+                    "extract_local_peaks",
+                ],
+                notes=["作为冠层高度先验输入。"],
+            )
+        )
+
+    for item in manifest.surface_models:
+        assets.append(
+            PreparedAsset(
+                source_type="surface_model",
+                source_id=item.id,
+                raw_path=item.path,
+                prepared_path=_prepared_path(prepared_root, "surface_models", item.id, item.path),
+                registry_key=f"surface_models/{item.id}",
+                preparation_actions=[
+                    "validate_readability",
+                    "reproject_if_needed",
+                    "align_to_reference_grid",
+                    "derive_surface_statistics",
+                ],
+                notes=["作为 DSM 或表面高程辅助输入。"],
+            )
+        )
+
     for item in manifest.survey_tables:
         assets.append(
             PreparedAsset(
@@ -179,6 +216,8 @@ def build_prepared_input_index(
             "asset_counts": {
                 "remote_sensing": len(manifest.remote_sensing),
                 "terrain_dem": len(manifest.terrain_dem),
+                "canopy_height": len(manifest.canopy_height),
+                "surface_models": len(manifest.surface_models),
                 "survey_tables": len(manifest.survey_tables),
                 "industry_vectors": len(manifest.industry_vectors),
                 "domain_knowledge": len(manifest.domain_knowledge_items),

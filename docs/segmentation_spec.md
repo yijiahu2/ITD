@@ -78,9 +78,9 @@
 - 将 `model_registry` 的内部历史阶段命名逐步替换为主模型/子模型表达
 - 将训练入口显式区分为：
   - `main_model_training`
-  - `child_model_training`
+  - `expert_model_training`
   - `main_model_finetune`
-  - `child_model_finetune`
+  - `expert_model_finetune`
 
 ## 知识嵌入计划
 

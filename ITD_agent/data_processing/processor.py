@@ -5,8 +5,10 @@ from typing import Any
 
 from input_layer.contracts import InputManifest
 
+from ITD_agent.context_engine import build_online_scene_state
 from ITD_agent.data_processing.artifact_store import ensure_data_processing_dirs, write_json
 from ITD_agent.data_processing.contracts import DataProcessingSummary
+from ITD_agent.data_processing.height import build_height_raster_profiles
 from ITD_agent.data_processing.imagery.priors import build_image_profiles
 from ITD_agent.data_processing.inventory.normalizer import build_industry_vector_profiles, build_survey_table_profiles
 from ITD_agent.data_processing.knowledge.normalizer import build_knowledge_profiles
@@ -24,6 +26,7 @@ def summarize_data_processing_stage(
     storage_layout = ensure_data_processing_dirs(runtime_cfg)
     image_profiles = build_image_profiles(input_manifest, runtime_cfg)
     dem_profiles = build_dem_profiles(input_manifest, image_profiles, terrain_info)
+    height_profiles = build_height_raster_profiles(input_manifest, image_profiles, storage_layout)
     survey_profiles = build_survey_table_profiles(input_manifest)
     vector_profiles = build_industry_vector_profiles(input_manifest)
     knowledge_profiles = build_knowledge_profiles(input_manifest)
@@ -39,6 +42,7 @@ def summarize_data_processing_stage(
     summary = DataProcessingSummary(
         image_profiles=image_profiles,
         dem_profiles=dem_profiles,
+        height_raster_profiles=height_profiles,
         survey_table_profiles=survey_profiles,
         industry_vector_profiles=vector_profiles,
         knowledge_profiles=knowledge_profiles,
@@ -49,6 +53,7 @@ def summarize_data_processing_stage(
         metadata={
             "image_count": len(image_profiles),
             "dem_count": len(dem_profiles),
+            "height_raster_count": len(height_profiles),
             "survey_table_count": len(survey_profiles),
             "industry_vector_count": len(vector_profiles),
             "knowledge_count": len(knowledge_profiles),
@@ -56,6 +61,16 @@ def summarize_data_processing_stage(
         },
     )
     summary_path = Path(storage_layout["summaries"]) / "data_processing_summary.json"
+    online_scene_state = build_online_scene_state(
+        runtime_cfg=runtime_cfg,
+        input_manifest=input_manifest,
+        terrain_info=terrain_info,
+        data_processing_summary=summary.to_dict(),
+    )
+    online_scene_state_path = Path(storage_layout["summaries"]) / "online_scene_state.json"
     summary.metadata["summary_json"] = str(summary_path)
+    summary.metadata["online_scene_state_json"] = str(online_scene_state_path)
+    summary.metadata["online_scene_state"] = online_scene_state
+    write_json(online_scene_state, online_scene_state_path)
     write_json(summary.to_dict(), summary_path)
     return summary

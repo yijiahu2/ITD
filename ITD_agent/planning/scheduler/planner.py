@@ -5,6 +5,7 @@ from typing import Any
 
 from ITD_agent.planning.scheduler.runtime_scheduler import (
     build_child_model_planning_runtime_cfg,
+    build_expert_model_planning_runtime_cfg,
     build_finetune_training_plan,
     build_main_model_planning_runtime_cfg,
     plan_runtime_config,
@@ -41,7 +42,7 @@ def generate_main_model_plan(
     )
 
 
-def generate_child_model_plan(
+def generate_expert_model_plan(
     *,
     cfg: dict[str, Any],
     template_path: str,
@@ -57,7 +58,7 @@ def generate_child_model_plan(
     summary_json: str | None = None,
 ) -> dict[str, Any]:
     plan_dir = _get_template_output_root(planning_root, template_path, "runtime")
-    runtime_cfg = build_child_model_planning_runtime_cfg(
+    runtime_cfg = build_expert_model_planning_runtime_cfg(
         cfg=cfg,
         input_assessment=input_assessment,
         input_manifest=input_manifest,
@@ -67,8 +68,39 @@ def generate_child_model_plan(
     )
     return plan_runtime_config(
         template_path=template_path,
-        output_path=plan_dir / f"child_model_round_{round_idx:02d}.yaml",
+        output_path=plan_dir / f"expert_model_round_{round_idx:02d}.yaml",
         runtime_cfg=runtime_cfg,
+        metrics_json=metrics_json,
+        details_csv=details_csv,
+        summary_json=summary_json,
+    )
+
+
+def generate_child_model_plan(
+    *,
+    cfg: dict[str, Any],
+    template_path: str,
+    planning_root: str | Path,
+    round_idx: int,
+    input_assessment: dict[str, Any],
+    input_manifest: dict[str, Any],
+    data_processing_summary: dict[str, Any],
+    roi_assessment: dict[str, Any],
+    previous_round_summary: dict[str, Any],
+    metrics_json: str | None = None,
+    details_csv: str | None = None,
+    summary_json: str | None = None,
+) -> dict[str, Any]:
+    return generate_expert_model_plan(
+        cfg=cfg,
+        template_path=template_path,
+        planning_root=planning_root,
+        round_idx=round_idx,
+        input_assessment=input_assessment,
+        input_manifest=input_manifest,
+        data_processing_summary=data_processing_summary,
+        roi_assessment=roi_assessment,
+        previous_round_summary=previous_round_summary,
         metrics_json=metrics_json,
         details_csv=details_csv,
         summary_json=summary_json,
@@ -105,7 +137,7 @@ def extract_plan_summary(plan: dict[str, Any]) -> dict[str, Any]:
         "runtime_plan": plan.get("runtime_plan"),
         "roi_refine_plan": roi_plan,
         "roi_extraction_plan": roi_plan,
-        "child_model_call_plan": plan.get("child_model_call_plan"),
+        "expert_model_call_plan": plan.get("expert_model_call_plan"),
         "knowledge_embedding_plan": plan.get("knowledge_embedding_plan"),
         "finetune_training_plan": plan.get("finetune_training_plan"),
     }

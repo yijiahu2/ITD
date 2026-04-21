@@ -20,6 +20,8 @@ class FinalDeliverables:
     publish_root: str
     tree_crowns_shp: str | None = None
     tree_points_shp: str | None = None
+    semantic_prior_tif: str | None = None
+    semantic_prior_png: str | None = None
     segmentation_visualization_png: str | None = None
     final_evaluation_report_md: str | None = None
     final_evaluation_report_json: str | None = None

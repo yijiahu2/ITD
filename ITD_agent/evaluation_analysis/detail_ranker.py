@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from pandas.errors import EmptyDataError
 
 from ITD_agent.segmentation.finetuning.io_utils import normalize_details_df
 
@@ -26,7 +27,10 @@ def summarize_details_csv(
     if not path.exists():
         return {"exists": False, "top_k_xiaoban": []}
 
-    raw_df = pd.read_csv(path)
+    try:
+        raw_df = pd.read_csv(path)
+    except EmptyDataError:
+        return {"exists": True, "num_units": 0, "top_k_xiaoban": []}
     if raw_df.empty:
         return {"exists": True, "num_units": 0, "top_k_xiaoban": []}
 
@@ -64,18 +68,29 @@ def summarize_details_csv(
         df["xiaoban_id"] = df["XBH"]
 
     def row_score(row: pd.Series) -> float:
-        score = 0.0
-        weights = [
-            ("tree_count_error_abs", 1.0),
-            ("mean_crown_width_error_abs", 5.0),
-            ("closure_error_abs", 10.0),
-            ("density_error_abs", 0.001),
-        ]
-        for col, weight in weights:
-            value = _safe_float(row.get(col))
-            if value is not None:
-                score += abs(value) * weight
-        return score
+        from ITD_agent.evaluation_analysis.reference_quality_engine import build_reference_score_breakdown
+
+        pred_tree = _safe_float(row.get("pred_tree_count"))
+        expected_tree = _safe_float(row.get("expected_tree_count"))
+        pred_crown = _safe_float(row.get("pred_mean_crown_width"))
+        expected_crown = _safe_float(row.get("expected_mean_crown_width"))
+        metrics = {
+            "tree_count_error_ratio": (
+                abs(pred_tree - expected_tree) / max(abs(expected_tree), 1.0e-6)
+                if pred_tree is not None and expected_tree not in (None, 0.0)
+                else None
+            ),
+            "mean_crown_width_error_ratio": (
+                abs(pred_crown - expected_crown) / max(abs(expected_crown), 1.0e-6)
+                if pred_crown is not None and expected_crown not in (None, 0.0)
+                else None
+            ),
+            "closure_error_abs": _safe_float(row.get("closure_error_abs")),
+            "density_error_abs": _safe_float(row.get("density_error_abs")),
+            "expected_density": _safe_float(row.get("expected_density")),
+        }
+        score = _safe_float(build_reference_score_breakdown(metrics, cfg=cfg).get("score"))
+        return float(score or 0.0)
 
     df["error_score"] = df.apply(row_score, axis=1)
     ranked = df.sort_values("error_score", ascending=False)

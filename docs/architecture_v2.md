@@ -2,7 +2,8 @@
 
 主维护文档：
 
-- [ITD_agent 现行架构与运行逻辑说明](/home/xth/forest_agent_project/docs/itd_agent_runtime_architecture_guide.md)
+- [当前代码地图](codemap.md)
+- [ITD_agent 现行架构与运行逻辑说明](itd_agent_runtime_architecture_guide.md)
 
 当前仓库已收口为三个对外部分，并且核心目录统一命名为 `ITD_agent`：
 
@@ -15,25 +16,39 @@
 
 ## 当前物理目录映射
 
+- `ITD_agent/orchestration/`
+  当前主运行编排目录，负责配置准备、单场景主链、grouped inference、运行期路径、输出同步与清理。
+- `ITD_agent/evaluation_analysis/`
+  当前评估分析目录，负责输入、主模型、ROI、子模型、微调效果、参考质量和最终评估。
+- `ITD_agent/llm_gateway/`
+  当前 LLM 网关目录，负责结构化 JSON 决策请求、prompt 组装和复盘输入压缩。
 - `ITD_agent/planning/agent/`
-  原 `agent/`
+  局部细化、按小班规划和旧式 agent 辅助逻辑。
 - `ITD_agent/planning/scheduler/`
-  当前“规划调度”模块的实现目录，负责模板管理与运行期计划生成
+  当前“规划调度”模块的实现目录，负责模板管理、参数搜索、专家族路由与运行期计划生成。
 - `ITD_agent/data_processing/`
-  原 `geo_layer/`
+  当前数据处理目录，负责影像、地形、小班、知识、公开数据集、ROI 和实例后处理。
 - `ITD_agent/segmentation/finetuning/`
-  原 `finetune_layer/`
+  微调数据准备、伪标签选择、数据处理微调回灌入口。
 - `ITD_agent/segmentation/model_training/`
-  原 `segmentation_train/`
+  分割模型训练、测试和 finetuned 推理入口。
 - `ITD_agent/segmentation/model_registry/`
-  原 `segmentation_zoo/`
+  分割算法注册、runner、adapter 和外部算法执行分发。
+- `ITD_agent/memory_store/`
+  执行轨迹、成功策略、失败模式和运行复盘的结构化记忆库。
+- `ITD_agent/finetune_pool/`
+  失败样本、回放样本、公开数据候选、训练触发快照和微调数据包导出。
 - `output_layer/reporting/`
-  原 `reporting/`
+  最终报告与评估结果整理。
+- `scripts/`
+  当前命令行包装、评估、微调、benchmark、切片和清理脚本。
+- `tools/`
+  运行期缓存 worker/client、stage runner、进程执行和栅格辅助工具。
 
 ## 兼容策略
 
-- 当前仓库已以新目录和新入口为准，不再保留旧层架构的历史命名与历史脚本。
-- 新架构优先通过适配器调用保留下来的底层实现，避免一次性重写算法本体。
+- 当前仓库以 `input_layer/`、`ITD_agent/`、`output_layer/`、`configs/`、`scripts/`、`tools/` 的真实目录为准。
+- 新架构通过 adapter/runner 调用外部分割实现，避免把外部框架细节塞进主编排器。
 - 新入口为 `python -m ITD_agent.orchestration.orchestrator --config <config>`。
 - `scripts/` 中仅保留围绕当前架构的专项 CLI 包装。
 

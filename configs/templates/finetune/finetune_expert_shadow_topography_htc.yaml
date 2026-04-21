@@ -3,7 +3,7 @@ run_name: expert_shadow_topography_htc_public_finetune
 base_config: /home/xth/forest_agent_project/configs/templates/runtime/runtime_dom197_segmentation_candidates.yaml
 output_dir: /mnt/f/forest_agent_project/outputs/experts/shadow_topography_htc
 segmentation_algorithm: mmdet_htc
-target_model_role: child_model
+target_model_role: expert_model
 target_expert_family: shadow_topography
 public_dataset_root: /mnt/f/forest_agent_project/open_dataset/ISPRS_ITD/ITD
 public_dataset_split_mapping:

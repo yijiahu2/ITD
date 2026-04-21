@@ -41,7 +41,33 @@ inputs:
         vertical_unit: m
 ```
 
-### 3. Survey Tables
+### 3. CHM
+
+```yaml
+inputs:
+  canopy:
+    chm:
+      - id: dom177_chm
+        path: /abs/path/dom177_chm.tif
+        resolution_m: 0.1
+        crs: EPSG:4547
+        vertical_unit: m
+```
+
+### 4. DSM
+
+```yaml
+inputs:
+  surface:
+    dsm:
+      - id: dom177_dsm
+        path: /abs/path/dom177_dsm.tif
+        resolution_m: 0.1
+        crs: EPSG:4547
+        vertical_unit: m
+```
+
+### 5. Survey Tables
 
 ```yaml
 inputs:
@@ -57,7 +83,7 @@ inputs:
           closure: canopy
 ```
 
-### 4. Industry Vectors
+### 6. Industry Vectors
 
 ```yaml
 inputs:
@@ -76,7 +102,7 @@ inputs:
           area_ha: MJ_hm2
 ```
 
-### 5. Domain Knowledge
+### 7. Domain Knowledge
 
 ```yaml
 inputs:
@@ -90,7 +116,7 @@ inputs:
         path: /abs/path/species.xlsx
 ```
 
-### 6. Public Datasets
+### 8. Public Datasets
 
 ```yaml
 inputs:
@@ -114,7 +140,20 @@ inputs:
 - 常用格式后缀检查
 - 表格和矢量字段存在性检查
 - COCO 顶层结构检查
+- CHM / DSM 栅格存在性和格式检查
 - `required: true` 的输入缺失时标记为 `error`
+
+## Recommended Core Inputs
+
+当前推荐的核心在线输入是：
+
+- `DOM`
+- `DEM`
+- `CHM`
+- `public_datasets` 作为离线知识与训练资源
+
+`IndustryVectors / SurveyTables` 默认为可选增强输入。
+当提供时，仍沿用当前 `field_mapping` 形式接入，但不再作为默认主流程必需项。
 
 ## Runtime Output
 

@@ -19,6 +19,7 @@ from tools.cached_stage_runners import run_segmentation_cached, run_semantic_pri
 
 
 CORE_KEYS = ("diam_list", "tile", "overlap", "tile_overlap", "augment", "iou_merge_thr", "bsize")
+SAFE_BSIZE = 256
 
 
 def _safe_float(value: Any) -> float | None:
@@ -111,7 +112,7 @@ def _build_candidate_pool(
     base["tile_overlap"] = _round_tile_overlap(float(base.get("tile_overlap") or 0.35))
     base["augment"] = _normalize_bool(base.get("augment", True))
     base["iou_merge_thr"] = _round_iou(float(base.get("iou_merge_thr") or 0.35))
-    base["bsize"] = int(base.get("bsize") or 256)
+    base["bsize"] = SAFE_BSIZE
 
     scene = scheduler_context.get("scene_profile") or {}
     quality = scene.get("image_quality_levels") or {}
@@ -183,6 +184,7 @@ def _build_candidate_pool(
     deduped: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in candidates:
+        item["params"]["bsize"] = SAFE_BSIZE
         signature = json.dumps(item["params"], sort_keys=True, ensure_ascii=False)
         if signature in seen:
             continue

@@ -36,6 +36,21 @@ class DEMSource:
 
 
 @dataclass
+class HeightRasterSource:
+    id: str
+    path: str
+    role: str
+    resolution_m: float | None = None
+    crs: str | None = None
+    vertical_unit: str | None = None
+    required: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class SurveyTableSource:
     id: str
     path: str
@@ -173,6 +188,8 @@ class InputManifest:
     config_path: str | None = None
     remote_sensing: list[RemoteSensingImageSource] = field(default_factory=list)
     terrain_dem: list[DEMSource] = field(default_factory=list)
+    canopy_height: list[HeightRasterSource] = field(default_factory=list)
+    surface_models: list[HeightRasterSource] = field(default_factory=list)
     survey_tables: list[SurveyTableSource] = field(default_factory=list)
     industry_vectors: list[IndustryVectorSource] = field(default_factory=list)
     domain_knowledge_items: list[DomainKnowledgeItem] = field(default_factory=list)
@@ -188,6 +205,14 @@ class InputManifest:
     @property
     def dem_paths(self) -> list[str]:
         return [item.path for item in self.terrain_dem if item.path]
+
+    @property
+    def chm_paths(self) -> list[str]:
+        return [item.path for item in self.canopy_height if item.path]
+
+    @property
+    def dsm_paths(self) -> list[str]:
+        return [item.path for item in self.surface_models if item.path]
 
     @property
     def survey_vector(self) -> str | None:
@@ -209,6 +234,8 @@ class InputManifest:
         return {
             "image": bool(self.remote_sensing),
             "dem": bool(self.terrain_dem),
+            "chm": bool(self.canopy_height),
+            "dsm": bool(self.surface_models),
             "inventory": bool(self.survey_tables or self.industry_vectors),
             "knowledge": bool(self.domain_knowledge_items),
             "public_datasets": bool(self.public_datasets),
@@ -221,6 +248,8 @@ class InputManifest:
             "config_path": self.config_path,
             "remote_sensing": [item.to_dict() for item in self.remote_sensing],
             "terrain_dem": [item.to_dict() for item in self.terrain_dem],
+            "canopy_height": [item.to_dict() for item in self.canopy_height],
+            "surface_models": [item.to_dict() for item in self.surface_models],
             "survey_tables": [item.to_dict() for item in self.survey_tables],
             "industry_vectors": [item.to_dict() for item in self.industry_vectors],
             "domain_knowledge_items": [item.to_dict() for item in self.domain_knowledge_items],
@@ -230,6 +259,8 @@ class InputManifest:
             "preparation": self.preparation.to_dict() if self.preparation else None,
             "remote_sensing_images": self.remote_sensing_images,
             "dem_paths": self.dem_paths,
+            "chm_paths": self.chm_paths,
+            "dsm_paths": self.dsm_paths,
             "survey_vector": self.survey_vector,
             "survey_tables_paths": self.survey_table_paths,
             "domain_knowledge": self.domain_knowledge,

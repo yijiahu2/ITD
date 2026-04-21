@@ -6,6 +6,7 @@ from typing import Any
 
 from .benchmark_engine import evaluate_benchmark_vector_result
 from .contracts import FinalAssessmentResult
+from .online_quality_engine import evaluate_online_quality
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -27,6 +28,50 @@ def _resolve_inst_shp(summary: dict[str, Any]) -> str | None:
     )
 
 
+def _resolve_patch_raster(summary: dict[str, Any], runtime_cfg: dict[str, Any] | None = None) -> str | None:
+    return (
+        (runtime_cfg or {}).get("input_image")
+        or (summary.get("run_meta") or {}).get("input_image")
+        or (summary.get("input_layer") or {}).get("input_image")
+    )
+
+
+def _resolve_semantic_prior_tif(summary: dict[str, Any]) -> str | None:
+    data_processing = summary.get("data_processing") or {}
+    if data_processing.get("m_sem_tif"):
+        return data_processing.get("m_sem_tif")
+    semantic_prior = data_processing.get("semantic_prior") or {}
+    if semantic_prior.get("m_sem_tif"):
+        return semantic_prior.get("m_sem_tif")
+    return (summary.get("output_aliases") or {}).get("m_sem_tif")
+
+
+def _resolve_chm_tif(summary: dict[str, Any], runtime_cfg: dict[str, Any] | None = None) -> str | None:
+    if (runtime_cfg or {}).get("chm_tif"):
+        return (runtime_cfg or {}).get("chm_tif")
+    input_layer = summary.get("input_layer") or {}
+    for item in input_layer.get("canopy_height") or []:
+        if isinstance(item, dict) and item.get("path"):
+            return str(item.get("path"))
+    return None
+
+
+def _build_online_quality_result(
+    summary: dict[str, Any],
+    *,
+    runtime_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    inst_shp = _resolve_inst_shp(summary)
+    if not inst_shp or not Path(inst_shp).exists():
+        return {}
+    return evaluate_online_quality(
+        inst_shp=str(inst_shp),
+        m_sem_tif=_resolve_semantic_prior_tif(summary),
+        chm_tif=_resolve_chm_tif(summary, runtime_cfg=runtime_cfg),
+        patch_raster=_resolve_patch_raster(summary, runtime_cfg=runtime_cfg),
+    )
+
+
 def _resolve_metrics(summary: dict[str, Any]) -> dict[str, Any]:
     metrics = summary.get("metrics")
     if isinstance(metrics, dict) and metrics:
@@ -39,7 +84,11 @@ def _resolve_metrics(summary: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def evaluate_reference_quality_result(summary: dict[str, Any]) -> dict[str, Any]:
+def evaluate_reference_quality_result(
+    summary: dict[str, Any],
+    *,
+    runtime_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     metrics = _resolve_metrics(summary)
     keys = [
         "pred_tree_count",
@@ -58,11 +107,25 @@ def evaluate_reference_quality_result(summary: dict[str, Any]) -> dict[str, Any]
         "density_error_abs",
     ]
     selected = {key: metrics.get(key) for key in keys if key in metrics}
-    return {
+    result = {
         "evaluation_mode": "reference_quality",
         "metrics_source": summary.get("metrics_json") or (summary.get("evaluation") or {}).get("metrics_json"),
         "selected_metrics": selected,
     }
+    online_quality = _build_online_quality_result(summary, runtime_cfg=runtime_cfg)
+    if isinstance(online_quality, dict) and online_quality:
+        result["online_quality_score"] = online_quality.get("quality_score")
+        online_metrics = online_quality.get("metrics") or {}
+        for source_key, target_key in [
+            ("patch_context", "patch_context"),
+            ("semantic_instance_consistency", "area_consistency"),
+            ("geometry_plausibility", "geometry_diagnostics"),
+            ("height_consistency", "height_diagnostics"),
+        ]:
+            payload = online_metrics.get(source_key)
+            if isinstance(payload, dict) and payload:
+                result[target_key] = payload
+    return result
 
 
 def evaluate_final_phase(
@@ -92,5 +155,5 @@ def evaluate_final_phase(
                 "message": "已请求 benchmark 评估，但缺少可用的 ground-truth 树冠矢量数据，已无法计算 AP50/AP75/R2。"
             },
         ).to_dict()
-    payload = evaluate_reference_quality_result(summary)
+    payload = evaluate_reference_quality_result(summary, runtime_cfg=runtime_cfg)
     return FinalAssessmentResult(evaluation_mode="reference_quality", payload=payload).to_dict()

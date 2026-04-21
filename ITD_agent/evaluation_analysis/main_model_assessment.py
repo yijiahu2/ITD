@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .online_quality_engine import evaluate_online_quality
 from .reference_quality_engine import evaluate_reference_quality
 
 
@@ -14,7 +15,26 @@ def evaluate_main_model_assessment(
     details_csv: str | None = None,
     command_runner=None,
 ) -> dict[str, Any]:
-    return evaluate_reference_quality(
+    online_eval = evaluate_online_quality(
+        inst_shp=inst_shp,
+        m_sem_tif=str(cfg.get("output_dir") and (cfg["output_dir"] + "/M_sem.tif")) if cfg.get("output_dir") else None,
+        chm_tif=cfg.get("chm_tif"),
+        patch_raster=cfg.get("input_image"),
+    )
+    if not cfg.get("xiaoban_shp"):
+        return {
+            "assessment_phase": "main_model",
+            "assessment_mode": "online_only",
+            "metrics_json": metrics_json,
+            "details_csv": details_csv,
+            "metrics": {},
+            "detail_summary": {},
+            "quality_score": online_eval.get("quality_score"),
+            "online_quality": online_eval,
+            "terrain_info": terrain_info,
+        }
+
+    reference_eval = evaluate_reference_quality(
         cfg,
         inst_shp=inst_shp,
         terrain_info=terrain_info,
@@ -23,3 +43,6 @@ def evaluate_main_model_assessment(
         details_csv=details_csv,
         command_runner=command_runner,
     )
+    reference_eval["assessment_mode"] = "online_plus_reference"
+    reference_eval["online_quality"] = online_eval
+    return reference_eval

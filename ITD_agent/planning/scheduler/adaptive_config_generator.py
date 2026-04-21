@@ -111,6 +111,7 @@ def _enforce_runtime_caps(generated_cfg: dict[str, Any], runtime_cfg: dict[str, 
     if isinstance(runtime_roi, dict) and "max_rounds" in runtime_roi:
         capped.setdefault("ITD_agent", {}).setdefault("planning", {}).setdefault("roi_extraction", {})
         capped["ITD_agent"]["planning"]["roi_extraction"]["max_rounds"] = int(runtime_roi["max_rounds"])
+    capped["bsize"] = 256
     return capped
 
 

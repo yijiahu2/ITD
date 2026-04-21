@@ -21,7 +21,7 @@ def _take_list(value: Any, limit: int = 5) -> list[Any]:
     return value[: max(int(limit), 0)]
 
 
-def _compact_child_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
+def _compact_expert_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": entry.get("name") or entry.get("algorithm"),
         "algorithm": entry.get("algorithm"),
@@ -51,9 +51,9 @@ def _compact_template_cfg(template_cfg: dict[str, Any]) -> dict[str, Any]:
         },
         "segmentation_models": {
             "main_model": (seg_cfg.get("main_model") or {}),
-            "child_models": [
-                _compact_child_model_entry(item)
-                for item in _take_list(seg_cfg.get("child_models"), 6)
+            "expert_models": [
+                _compact_expert_model_entry(item)
+                for item in _take_list(seg_cfg.get("expert_models") or seg_cfg.get("child_models"), 6)
                 if isinstance(item, dict)
             ],
         },
@@ -327,8 +327,8 @@ def _build_planning_prompt(
     "selection_rules": ["..."],
     "stop_rules": ["..."]
   }},
-  "child_model_call_plan": {{
-    "preferred_child_model": "可选",
+  "expert_model_call_plan": {{
+    "preferred_expert_model": "可选",
     "candidate_models": ["..."],
     "routing_rules": ["..."],
     "escalation_rules": ["..."]
@@ -367,7 +367,7 @@ def _build_roi_decision_prompt(
     compact_roi_assessment = _compact_roi_assessment(roi_assessment)
     return f"""
 你是 ITD_agent 的 LLM网关，当前负责 ROI 细化决策。
-请基于 ROI 评估和当前指标，判断是否继续调用子模型细化。
+请基于 ROI 评估和当前指标，判断是否继续调用专家模型细化。
 
 ROI评估：
 {json.dumps(compact_roi_assessment, ensure_ascii=False, indent=2)}
@@ -379,7 +379,7 @@ ROI评估：
 {{
   "continue_refinement": true,
   "reason": "简短说明",
-  "preferred_child_model": "可选，若不需要可省略"
+  "preferred_expert_model": "可选，若不需要可省略"
 }}
     """
 

@@ -70,7 +70,7 @@ def build_run_summary(
         "evaluation_analysis": {
             "input_assessment": input_assessment,
             "main_model_assessment": main_eval_info,
-            "child_model_assessments": [item.get("child_model_assessment") for item in roi_round_summaries],
+            "expert_model_assessments": [item.get("expert_model_assessment") for item in roi_round_summaries],
             "reference_quality_final": final_eval_info,
             "roi_assessment": final_roi_assessment,
         },
@@ -82,12 +82,12 @@ def build_run_summary(
             "roi_decision": final_roi_decision,
             "roi_decision_gateway_trace": final_roi_decision.get("llm_gateway_result") if isinstance(final_roi_decision, dict) else None,
             "roi_round_llm_results": [
-                item["child_plan"].get("llm_result") for item in roi_round_summaries if item["child_plan"].get("llm_result") is not None
+                item["expert_plan"].get("llm_result") for item in roi_round_summaries if item["expert_plan"].get("llm_result") is not None
             ],
             "roi_round_gateway_traces": [
-                item["child_plan"].get("llm_gateway_result")
+                item["expert_plan"].get("llm_gateway_result")
                 for item in roi_round_summaries
-                if item["child_plan"].get("llm_gateway_result") is not None
+                if item["expert_plan"].get("llm_gateway_result") is not None
             ],
         },
         "planning_scheduler": {
@@ -95,7 +95,7 @@ def build_run_summary(
             "roi_rounds": [
                 {
                     "round_idx": item["round_idx"],
-                    **extract_plan_summary(item["child_plan"]),
+                    **extract_plan_summary(item["expert_plan"]),
                     "roi_assessment": item["roi_assessment"],
                     "roi_decision": item["roi_decision"],
                     "accepted": item.get("accepted"),
@@ -201,6 +201,10 @@ def finalize_run_summary(
     if final_outputs.get("tree_points_shp"):
         summary["segmentation_model"]["tree_points_shp"] = final_outputs["tree_points_shp"]
         summary["tree_points_shp"] = final_outputs["tree_points_shp"]
+    if final_outputs.get("semantic_prior_tif"):
+        summary["semantic_prior_tif"] = final_outputs["semantic_prior_tif"]
+    if final_outputs.get("semantic_prior_png"):
+        summary["semantic_prior_png"] = final_outputs["semantic_prior_png"]
     if final_outputs.get("segmentation_visualization_png"):
         summary["segmentation_visualization_png"] = final_outputs["segmentation_visualization_png"]
     if final_outputs.get("final_evaluation_report_md"):

@@ -53,7 +53,7 @@ class ROIAssessment:
 
 
 @dataclass
-class ChildModelAssessment:
+class ExpertModelAssessment:
     assessment_phase: str
     round_idx: int
     metrics_json: str | None = None
@@ -67,6 +67,9 @@ class ChildModelAssessment:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+ChildModelAssessment = ExpertModelAssessment
 
 
 @dataclass

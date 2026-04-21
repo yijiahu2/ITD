@@ -9,14 +9,16 @@ from ITD_agent.config_adapter import load_raw_yaml, load_runtime_config, save_ru
 from ITD_agent.data_processing.fusion_postprocess import fuse_instance_layers
 from ITD_agent.data_processing.processor import summarize_data_processing_stage
 from ITD_agent.evaluation_analysis.evaluator import (
-    evaluate_child_model_phase,
+    evaluate_expert_model_phase,
     evaluate_input_phase,
     evaluate_main_model_phase,
     evaluate_roi_phase,
 )
 from ITD_agent.evaluation_analysis.finetune_effect_assessment import build_finetune_recommendation as build_finetune_recommendation_impl
 from ITD_agent.evaluation_analysis.reference_quality_engine import score_reference_metrics
+from ITD_agent.orchestration.expert_model_loop import build_expert_model_loop_trace, save_expert_model_loop_trace
 from ITD_agent.orchestration.grouped_inference import run_grouped_experiment
+from ITD_agent.orchestration.main_model_loop import build_main_model_loop_trace, save_main_model_loop_trace
 from ITD_agent.orchestration.runtime_paths import (
     collect_run_metadata,
     get_eval_output_paths,
@@ -30,7 +32,7 @@ from ITD_agent.planning.agent.local_refine import run_local_refinement
 from ITD_agent.planning.scheduler import (
     extract_plan_summary,
     extract_segmentation_params as extract_segmentation_params_impl,
-    generate_child_model_plan,
+    generate_expert_model_plan,
     generate_finetune_plan,
     generate_main_model_plan,
 )
@@ -265,6 +267,19 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
         details_csv=eval_paths["details_csv"],
         command_runner=run_cmd,
     )
+    main_model_loop_trace = build_main_model_loop_trace(
+        run_name=str(effective_main_cfg.get("run_name") or output_dir.name),
+        online_scene_state=((data_processing_summary_dict.get("metadata") or {}).get("online_scene_state") or {}),
+        input_assessment=input_assessment,
+        main_plan=main_plan,
+        semantic_prior_info=semantic_prior_info,
+        main_model_info=main_model_info,
+        main_eval_info=main_eval_info,
+    )
+    main_plan["main_model_loop_trace_json"] = save_main_model_loop_trace(
+        main_model_loop_trace,
+        output_dir / "planning_scheduler" / "main_model_loop_trace.json",
+    )
     main_roi_assessment = evaluate_roi_phase(
         effective_main_cfg,
         metrics=main_eval_info["metrics"],
@@ -284,7 +299,7 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
     current_metrics_json = main_eval_info["metrics_json"]
     current_details_csv = main_eval_info["details_csv"]
     current_metrics = dict(main_eval_info["metrics"])
-    current_score = score_reference_metrics(current_metrics)
+    current_score = score_reference_metrics(current_metrics, cfg=effective_main_cfg)
     initial_score = current_score
     roi_baseline_score = current_score
     current_config_path = main_plan["generated_config_path"]
@@ -300,7 +315,7 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
     while roi_decision.get("continue_refinement", False) and round_idx < max_rounds:
         round_idx += 1
 
-        child_plan = generate_child_model_plan(
+        expert_plan = generate_expert_model_plan(
             cfg=effective_main_cfg,
             template_path=current_config_path,
             planning_root=planning_root,
@@ -318,26 +333,26 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
             metrics_json=current_metrics_json,
             details_csv=current_details_csv,
         )
-        child_cfg = child_plan["effective_runtime_cfg"]
-        validate_runtime_cfg(child_cfg)
+        expert_cfg = expert_plan["effective_runtime_cfg"]
+        validate_runtime_cfg(expert_cfg)
 
-        child_best_params = extract_segmentation_params(child_cfg)
-        child_roi_plan = child_plan.get("roi_refine_plan") or roi_cfg
+        expert_best_params = extract_segmentation_params(expert_cfg)
+        expert_roi_plan = expert_plan.get("roi_refine_plan") or roi_cfg
         refine_summary = run_local_refinement(
-            base_config_path=child_plan["generated_config_path"],
+            base_config_path=expert_plan["generated_config_path"],
             global_details_csv=current_details_csv,
             global_inst_shp=current_inst_shp,
-            best_params=child_best_params,
-            xiaoban_id_field=child_cfg["xiaoban_id_field"],
-            top_k=int(child_roi_plan.get("top_k", 3)),
-            buffer_m=float(child_roi_plan.get("buffer_m", 5.0)),
-            strategy_mode=str(child_roi_plan.get("strategy_mode", "auto")),
-            dem_tif=child_cfg.get("dem_tif"),
-            slope_tif=child_cfg.get("slope_tif"),
-            aspect_tif=child_cfg.get("aspect_tif"),
+            best_params=expert_best_params,
+            xiaoban_id_field=expert_cfg["xiaoban_id_field"],
+            top_k=int(expert_roi_plan.get("top_k", 3)),
+            buffer_m=float(expert_roi_plan.get("buffer_m", 5.0)),
+            strategy_mode=str(expert_roi_plan.get("strategy_mode", "auto")),
+            dem_tif=expert_cfg.get("dem_tif"),
+            slope_tif=expert_cfg.get("slope_tif"),
+            aspect_tif=expert_cfg.get("aspect_tif"),
             local_refine_root=str(local_refine_root),
-            preferred_child_model=(child_plan.get("child_model_call_plan") or {}).get("preferred_child_model"),
-            child_plan_summary=extract_plan_summary(child_plan),
+            preferred_expert_model=(expert_plan.get("expert_model_call_plan") or {}).get("preferred_expert_model"),
+            expert_plan_summary=extract_plan_summary(expert_plan),
             roi_candidates=(main_roi_assessment if round_idx == 1 else roi_round_summaries[-1]["roi_assessment"]).get("candidate_rois"),
         )
 
@@ -350,8 +365,8 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
         candidate_metrics_json = refine_summary["merged_metrics_json"]
         candidate_details_csv = refine_summary["merged_details_csv"]
         candidate_metrics = load_json(candidate_metrics_json)
-        child_eval_info = evaluate_child_model_phase(
-            child_cfg,
+        expert_eval_info = evaluate_expert_model_phase(
+            expert_cfg,
             metrics=candidate_metrics,
             metrics_json=candidate_metrics_json,
             details_csv=candidate_details_csv,
@@ -359,8 +374,8 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
             previous_score=current_score,
             terrain_info=terrain_info,
         )
-        roi_assessment = child_eval_info["roi_assessment"]
-        candidate_score = child_eval_info.get("current_score")
+        roi_assessment = expert_eval_info["roi_assessment"]
+        candidate_score = expert_eval_info.get("current_score")
         accept_epsilon = float(roi_cfg.get("improvement_epsilon", 0.01))
         better_than_roi_baseline = False
         if candidate_score is not None and roi_baseline_score is not None:
@@ -383,7 +398,7 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
             current_details_csv = candidate_details_csv
             current_metrics = candidate_metrics
             current_score = candidate_score
-            current_config_path = child_plan["generated_config_path"]
+            current_config_path = expert_plan["generated_config_path"]
             best_source = f"roi_round_{round_idx}"
         else:
             failure_modes = _build_refinement_failure_modes(
@@ -393,11 +408,11 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
                 candidate_score=candidate_score,
             )
         roi_round_decision = evaluate_roi_phase(
-            child_cfg,
+            expert_cfg,
             metrics=candidate_metrics,
             details_csv=candidate_details_csv,
             round_idx=round_idx,
-            previous_score=child_eval_info.get("previous_score"),
+            previous_score=expert_eval_info.get("previous_score"),
             terrain_info=terrain_info,
         )
         roi_decision = roi_round_decision.get("decision") or {
@@ -405,23 +420,38 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
             "decision_source": str(roi_round_decision.get("decision_source") or "heuristic"),
             "reason": str(roi_round_decision.get("decision_reason") or ""),
         }
+        expert_model_loop_trace = build_expert_model_loop_trace(
+            round_idx=round_idx,
+            roi_assessment=roi_round_decision,
+            expert_plan=expert_plan,
+            refine_summary=refine_summary,
+            expert_eval_info=expert_eval_info,
+            roi_decision=roi_decision,
+            accepted=accepted,
+            acceptance_reason=acceptance_reason,
+            failure_modes=failure_modes,
+        )
+        expert_model_loop_trace_json = save_expert_model_loop_trace(
+            expert_model_loop_trace,
+            output_dir / "planning_scheduler" / f"expert_model_loop_round_{round_idx:02d}.json",
+        )
         roi_round_summaries.append(
             {
                 "round_idx": round_idx,
-                "child_plan": {
-                    "generated_config_path": child_plan.get("generated_config_path"),
-                    "parameter_updates": child_plan.get("parameter_updates"),
-                    "llm_result": child_plan.get("llm_result"),
-                    "llm_gateway_result": child_plan.get("llm_gateway_result"),
-                    "scheduler_context": child_plan.get("scheduler_context"),
-                    "runtime_plan": child_plan.get("runtime_plan"),
-                    "roi_refine_plan": child_plan.get("roi_refine_plan"),
-                    "child_model_call_plan": child_plan.get("child_model_call_plan"),
-                    "knowledge_embedding_plan": child_plan.get("knowledge_embedding_plan"),
+                "expert_plan": {
+                    "generated_config_path": expert_plan.get("generated_config_path"),
+                    "parameter_updates": expert_plan.get("parameter_updates"),
+                    "llm_result": expert_plan.get("llm_result"),
+                    "llm_gateway_result": expert_plan.get("llm_gateway_result"),
+                    "scheduler_context": expert_plan.get("scheduler_context"),
+                    "runtime_plan": expert_plan.get("runtime_plan"),
+                    "roi_refine_plan": expert_plan.get("roi_refine_plan"),
+                    "expert_model_call_plan": expert_plan.get("expert_model_call_plan"),
+                    "knowledge_embedding_plan": expert_plan.get("knowledge_embedding_plan"),
                 },
-                "best_params": child_best_params,
+                "best_params": expert_best_params,
                 "refine_summary": refine_summary,
-                "child_model_assessment": child_eval_info,
+                "expert_model_assessment": expert_eval_info,
                 "roi_assessment": roi_round_decision,
                 "roi_decision": roi_decision,
                 "accepted": accepted,
@@ -439,6 +469,8 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
                 "selected_inst_shp_after_round": current_inst_shp,
                 "selected_score_after_round": current_score,
                 "failure_modes": failure_modes,
+                "expert_model_loop_trace": expert_model_loop_trace,
+                "expert_model_loop_trace_json": expert_model_loop_trace_json,
             }
         )
 
@@ -469,8 +501,8 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
     finetune_training_plan = generate_finetune_plan(
         runtime_cfg=effective_main_cfg,
         planning_root=planning_root,
-        scheduler_context=(roi_round_summaries[-1]["child_plan"].get("scheduler_context") if roi_round_summaries else main_plan.get("scheduler_context")) or {},
-        llm_result=(roi_round_summaries[-1]["child_plan"].get("llm_result") if roi_round_summaries else main_plan.get("llm_result")),
+        scheduler_context=(roi_round_summaries[-1]["expert_plan"].get("scheduler_context") if roi_round_summaries else main_plan.get("scheduler_context")) or {},
+        llm_result=(roi_round_summaries[-1]["expert_plan"].get("llm_result") if roi_round_summaries else main_plan.get("llm_result")),
         finetune_recommendation=finetune_recommendation,
     )
 

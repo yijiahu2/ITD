@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -36,6 +36,7 @@ from ITD_agent.data_processing.instance_ops import (
     suppress_small_boundary_fragments,
 )
 from ITD_agent.data_processing.terrain.dem_pipeline import generate_terrain_products
+from ITD_agent.evaluation_analysis.online_quality_engine import evaluate_online_quality
 from tools.process_runner import run_streaming
 from tools.runtime_cache_client import run_semantic_prior_task_via_worker
 
@@ -104,6 +105,10 @@ def _normalize_model_name(name: Any) -> str:
     return safe_str(name, "").strip().lower()
 
 
+def _is_signal_roi_id(value: Any) -> bool:
+    return safe_str(value, "").strip().startswith("signal_roi_")
+
+
 def _nearest_choice(value: float, choices: List[float]) -> float:
     return min(choices, key=lambda item: abs(float(item) - float(value)))
 
@@ -165,15 +170,15 @@ def sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _resolve_preferred_child_runtime_overrides(
-    preferred_child_model: str | None,
-    child_plan_summary: dict[str, Any] | None,
+def _resolve_preferred_expert_runtime_overrides(
+    preferred_expert_model: str | None,
+    expert_plan_summary: dict[str, Any] | None,
 ) -> Dict[str, Any]:
-    if not preferred_child_model or not isinstance(child_plan_summary, dict):
+    if not preferred_expert_model or not isinstance(expert_plan_summary, dict):
         return {}
-    call_plan = child_plan_summary.get("child_model_call_plan") or {}
+    call_plan = expert_plan_summary.get("expert_model_call_plan") or expert_plan_summary.get("child_model_call_plan") or {}
     profiles = call_plan.get("candidate_profiles") or []
-    preferred_name = _normalize_model_name(preferred_child_model)
+    preferred_name = _normalize_model_name(preferred_expert_model)
     for item in profiles:
         if not isinstance(item, dict):
             continue
@@ -186,12 +191,12 @@ def _resolve_preferred_child_runtime_overrides(
     return {}
 
 
-def _merge_preferred_child_base_params(
+def _merge_preferred_expert_base_params(
     base_params: Dict[str, Any],
-    preferred_child_model: str | None,
-    child_plan_summary: dict[str, Any] | None,
+    preferred_expert_model: str | None,
+    expert_plan_summary: dict[str, Any] | None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    overrides = _resolve_preferred_child_runtime_overrides(preferred_child_model, child_plan_summary)
+    overrides = _resolve_preferred_expert_runtime_overrides(preferred_expert_model, expert_plan_summary)
     if not overrides:
         return sanitize_params(base_params), {}
     merged = dict(base_params)
@@ -634,6 +639,38 @@ def evaluate_merged_result(
 ) -> Dict[str, Any]:
     merged_metrics_json = str(local_root / "merged_metrics.json")
     merged_details_csv = str(local_root / "merged_details.csv")
+    compare_json = str(local_root / "refine_compare_summary.json")
+
+    if not base_cfg.get("xiaoban_shp"):
+        online_eval = evaluate_online_quality(
+            inst_shp=merged_shp,
+            m_sem_tif=str(Path(base_cfg["output_dir"]) / "M_sem.tif"),
+            chm_tif=base_cfg.get("chm_tif"),
+        )
+        save_json(online_eval, merged_metrics_json)
+        pd.DataFrame([]).to_csv(merged_details_csv, index=False)
+        compare = {
+            "evaluation_mode": "online_only",
+            "merged_metrics_json": merged_metrics_json,
+            "merged_details_csv": merged_details_csv,
+            "compare_json": compare_json,
+            "bad_ids": [str(x) for x in bad_ids],
+            "group_plan": group_plan,
+            "online_quality": online_eval,
+            "terrain_rule_config": {
+                "flat_slope_threshold_deg": base_cfg.get("flat_slope_threshold_deg", 5.0),
+                "plain_relief_threshold_m": base_cfg.get("plain_relief_threshold_m", 30.0),
+            },
+        }
+        Path(compare_json).write_text(json.dumps(compare, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {
+            "merged_metrics_json": merged_metrics_json,
+            "merged_details_csv": merged_details_csv,
+            "compare_json": compare_json,
+            "bad_ids": bad_ids,
+            "group_plan": group_plan,
+            "terrain_rule_config": compare["terrain_rule_config"],
+        }
 
     cmd = [
         sys.executable,
@@ -667,7 +704,6 @@ def evaluate_merged_result(
     if res.returncode != 0:
         raise RuntimeError(f"merged evaluation failed:\n{res.stdout}")
 
-    compare_json = str(local_root / "refine_compare_summary.json")
     with open(base_cfg["metrics_json"], "r", encoding="utf-8") as f:
         before_metrics = json.load(f)
     with open(merged_metrics_json, "r", encoding="utf-8") as f:
@@ -1264,11 +1300,18 @@ def run_one_group_refinement(
     buffer_m: float,
     local_root: Path,
     terrain_info: Dict[str, Any],
-    preferred_child_model: str | None = None,
-    child_plan_summary: dict[str, Any] | None = None,
+    preferred_expert_model: str | None = None,
+    expert_plan_summary: dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     xiaoban_ids = [str(x) for x in group["xiaoban_ids"]]
     prior_xiaoban_ids = [str(x) for x in (group.get("prior_xiaoban_ids") or [])]
+    roi_geometry_wkt = str(group.get("roi_geometry_wkt") or "").strip()
+    if prior_xiaoban_ids:
+        target_xiaoban_ids = list(prior_xiaoban_ids)
+    elif roi_geometry_wkt:
+        target_xiaoban_ids = [item for item in xiaoban_ids if not _is_signal_roi_id(item)]
+    else:
+        target_xiaoban_ids = list(xiaoban_ids)
     strategy = group["strategy"]
     params = sanitize_params(group["params"])
 
@@ -1278,7 +1321,7 @@ def run_one_group_refinement(
 
     roi_inputs = prepare_roi_refinement_inputs(
         base_cfg=base_cfg,
-        xiaoban_ids=prior_xiaoban_ids or xiaoban_ids,
+        xiaoban_ids=target_xiaoban_ids or None,
         buffer_m=buffer_m,
         group_name=group_name,
         terrain_info=terrain_info,
@@ -1312,10 +1355,10 @@ def run_one_group_refinement(
         segmentation_info = execute_segmentation_model(
             cfg=local_cfg,
             m_sem_tif=semantic_prior_info["m_sem_tif"],
-            phase="roi_child_inference",
-            model_role="child_model",
-            preferred_model=preferred_child_model,
-            plan_summary=child_plan_summary or {},
+            phase="roi_expert_inference",
+            model_role="expert_model",
+            preferred_model=preferred_expert_model,
+            plan_summary=expert_plan_summary or {},
         )
     except Exception as e:
         raise RuntimeError(f"Local refine failed [{group_name}]:\n{e}")
@@ -1359,8 +1402,8 @@ def run_one_group_refinement(
         "roi_extent_gpkg": roi_inputs.get("roi_extent_gpkg"),
         "roi_metadata": roi_inputs.get("roi_metadata"),
         "roi_cache_root": roi_inputs.get("roi_cache_root"),
-        "preferred_child_model": preferred_child_model,
-        "child_plan_summary": child_plan_summary or {},
+        "preferred_expert_model": preferred_expert_model,
+        "expert_plan_summary": expert_plan_summary or {},
         "members": group.get("members", []),
     }
 
@@ -1384,16 +1427,16 @@ def run_local_refinement(
     slope_tif: Optional[str] = None,
     aspect_tif: Optional[str] = None,
     local_refine_root: Optional[str] = None,
-    preferred_child_model: str | None = None,
-    child_plan_summary: dict[str, Any] | None = None,
+    preferred_expert_model: str | None = None,
+    expert_plan_summary: dict[str, Any] | None = None,
     roi_candidates: Optional[List[Dict[str, Any]]] = None,
 ):
     base_cfg = load_yaml(base_config_path)
     base_params = sanitize_params(best_params)
-    base_params, preferred_child_runtime_overrides = _merge_preferred_child_base_params(
+    base_params, preferred_expert_runtime_overrides = _merge_preferred_expert_base_params(
         base_params=base_params,
-        preferred_child_model=preferred_child_model,
-        child_plan_summary=child_plan_summary,
+        preferred_expert_model=preferred_expert_model,
+        expert_plan_summary=expert_plan_summary,
     )
 
     if roi_candidates:
@@ -1445,8 +1488,8 @@ def run_local_refinement(
             "global_inst_shp": global_inst_shp,
             "strategy_mode": strategy_mode,
             "base_params": base_params,
-            "preferred_child_model": preferred_child_model,
-            "preferred_child_runtime_overrides": preferred_child_runtime_overrides,
+            "preferred_expert_model": preferred_expert_model,
+            "preferred_expert_runtime_overrides": preferred_expert_runtime_overrides,
             "bad_xiaoban_ids": bad_ids,
             "roi_candidates": roi_candidates or [],
             "group_plan": group_plan,
@@ -1469,8 +1512,8 @@ def run_local_refinement(
             buffer_m=buffer_m,
             local_root=local_root,
             terrain_info=terrain_info,
-            preferred_child_model=preferred_child_model,
-            child_plan_summary=child_plan_summary,
+            preferred_expert_model=preferred_expert_model,
+            expert_plan_summary=expert_plan_summary,
         )
         group_summaries.append(group_summary)
         current_global_shp = group_summary["merged_after_group_shp"]
@@ -1510,8 +1553,8 @@ def run_local_refinement(
         "bad_xiaoban_ids": bad_ids,
         "roi_candidates": roi_candidates or [],
         "base_params": base_params,
-        "preferred_child_model": preferred_child_model,
-        "preferred_child_runtime_overrides": preferred_child_runtime_overrides,
+        "preferred_expert_model": preferred_expert_model,
+        "preferred_expert_runtime_overrides": preferred_expert_runtime_overrides,
         "terrain_inputs": terrain_info,
         "group_summaries": group_summaries,
         "merged_shp": final_merged_shp,
@@ -1556,9 +1599,9 @@ def main():
         help="Optional JSON file containing fixed roi_candidates to reuse for refinement.",
     )
     parser.add_argument(
-        "--preferred_child_model",
+        "--preferred_expert_model",
         default=None,
-        help="Optional child model name to force during ROI refinement.",
+        help="Optional expert model name to force during ROI refinement.",
     )
     parser.add_argument(
         "--local_refine_root",
@@ -1586,7 +1629,7 @@ def main():
         slope_tif=args.slope_tif,
         aspect_tif=args.aspect_tif,
         local_refine_root=args.local_refine_root,
-        preferred_child_model=args.preferred_child_model,
+        preferred_expert_model=args.preferred_expert_model,
         roi_candidates=roi_candidates,
     )
 

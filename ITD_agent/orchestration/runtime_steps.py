@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from ITD_agent.orchestration.runtime_paths import get_stage_output_paths
 from ITD_agent.orchestration.runtime_support import require_file, run_bash_in_conda_env
+from tools.runtime_cache_client import run_semantic_prior_task_via_worker
 
 
 def _normalize_extra_args(extra_args: Any) -> list[str]:
@@ -39,6 +40,9 @@ def _normalize_semantic_prior_extra_args(extra_args: Any) -> list[str]:
 def run_semantic_prior_task(cfg: dict[str, Any]) -> dict[str, Any]:
     paths = get_stage_output_paths(cfg)
     Path(paths["m_sem_tif"]).parent.mkdir(parents=True, exist_ok=True)
+
+    if bool(cfg.get("use_runtime_cache_worker")):
+        return run_semantic_prior_task_via_worker(cfg)
 
     cmd = [
         "python",

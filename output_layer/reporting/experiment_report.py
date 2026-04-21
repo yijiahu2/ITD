@@ -85,6 +85,65 @@ def _build_inventory_lines(result: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _build_area_consistency_lines(result: dict[str, Any]) -> list[str]:
+    area = result.get("area_consistency") or {}
+    if not area.get("available"):
+        return []
+    rows = [
+        ("DOM面积(m²)", area.get("patch_area_m2")),
+        ("语义树冠面积(m²)", area.get("semantic_area")),
+        ("实例union面积(m²)", area.get("instance_union_area")),
+        ("语义覆盖率", area.get("semantic_cover_ratio")),
+        ("实例覆盖率", area.get("instance_cover_ratio")),
+        ("覆盖率差值绝对值", area.get("cover_ratio_delta_abs")),
+        ("语义-实例 IoU", area.get("overlap_iou")),
+        ("实例/语义面积比", area.get("coverage_ratio")),
+        ("语义召回率", area.get("semantic_recall")),
+        ("实例泄漏率", area.get("instance_leakage")),
+        ("语义缺口率", area.get("semantic_gap")),
+    ]
+    lines = [
+        "",
+        "## 冠层面积一致性",
+        "",
+        "| 指标 | 数值 |",
+        "|---|---:|",
+    ]
+    for name, value in rows:
+        lines.append(f"| {name} | {_fmt(value)} |")
+    return lines
+
+
+def _build_geometry_diagnostics_lines(result: dict[str, Any]) -> list[str]:
+    geometry = result.get("geometry_diagnostics") or {}
+    if not geometry.get("available"):
+        return []
+    rows = [
+        ("实例数", geometry.get("instance_count"), 0),
+        ("union树冠面积(m²)", geometry.get("union_area_m2"), 4),
+        ("面积和/union比", geometry.get("sum_to_union_ratio"), 4),
+        ("平均面积(m²)", geometry.get("mean_area_m2"), 4),
+        ("面积中位数(m²)", geometry.get("median_area_m2"), 4),
+        ("平均等效冠幅(m)", geometry.get("mean_equivalent_crown_width_m"), 4),
+        ("碎片率(<4m²)", geometry.get("small_fragment_ratio_lt_4m2"), 4),
+        ("碎片率(<6m²)", geometry.get("small_fragment_ratio_lt_6m2"), 4),
+        ("最大单块占比", geometry.get("max_instance_area_share"), 4),
+        ("前5大单块占比", geometry.get("top5_instance_area_share"), 4),
+        ("边界接触率", geometry.get("edge_touch_ratio"), 4),
+        ("几何重叠对数", geometry.get("overlap_pair_count"), 0),
+    ]
+    lines = [
+        "",
+        "## 几何健康度",
+        "",
+        "| 指标 | 数值 |",
+        "|---|---:|",
+    ]
+    for name, value, digits in rows:
+        lines.append(f"| {name} | {_fmt(value, digits=digits)} |")
+    return lines
+
+
 def _build_unavailable_lines(result: dict[str, Any]) -> list[str]:
     return [
         "## 最终融合结果质量",
@@ -138,6 +197,8 @@ def build_experiment_report(
         lines.extend(_build_benchmark_lines(result))
     elif mode in {"inventory_consistency", "reference_quality"}:
         lines.extend(_build_inventory_lines(result))
+        lines.extend(_build_area_consistency_lines(result))
+        lines.extend(_build_geometry_diagnostics_lines(result))
     else:
         lines.extend(_build_unavailable_lines(result))
 

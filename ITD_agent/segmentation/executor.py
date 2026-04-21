@@ -8,6 +8,7 @@ from typing import Any
 
 from ITD_agent.segmentation.contracts import SegmentationExecutionRequest, SegmentationExecutionResult
 from tools.process_runner import run_streaming
+from tools.runtime_cache_client import run_segmentation_task_via_worker
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -75,7 +76,7 @@ def _resolve_role_entry(cfg: dict[str, Any], model_role: str, preferred_model: s
         entry = seg_models.get("main_model")
         return entry if isinstance(entry, dict) else {}
 
-    child_candidates = seg_models.get("child_models") or seg_models.get("expert_models") or []
+    child_candidates = seg_models.get("expert_models") or seg_models.get("child_models") or []
     if isinstance(child_candidates, dict):
         child_candidates = list(child_candidates.values())
     if not isinstance(child_candidates, list):
@@ -160,6 +161,25 @@ def execute_segmentation_model(
         },
         expected_outputs=["y_inst_shp"],
     )
+
+    if bool(exec_cfg.get("use_runtime_cache_worker")):
+        result = run_segmentation_task_via_worker(exec_cfg, m_sem_tif)
+        execution_result = SegmentationExecutionResult(
+            phase=phase,
+            model_role=model_role,
+            algorithm_name=request.algorithm_name,
+            status="completed",
+            output_paths={k: v for k, v in result.items() if isinstance(v, str)},
+            command=["runtime_cache_worker", model_role, phase],
+            metadata={
+                "selected_model_name": exec_cfg.get("selected_model_name"),
+                "plan_summary": plan_summary or {},
+                "used_runtime_cache_worker": True,
+            },
+        ).to_dict()
+        result["execution_request"] = request.to_dict()
+        result["execution_result"] = execution_result
+        return result
 
     segmentation_algorithm = str(exec_cfg.get("segmentation_algorithm", "")).strip().lower()
     if segmentation_algorithm and segmentation_algorithm != "legacy_cellpose_sam":

@@ -32,7 +32,7 @@ class PlanningDecision:
     effective_runtime_cfg: dict[str, Any] = field(default_factory=dict)
     runtime_plan: dict[str, Any] = field(default_factory=dict)
     roi_refine_plan: dict[str, Any] = field(default_factory=dict)
-    child_model_call_plan: dict[str, Any] = field(default_factory=dict)
+    expert_model_call_plan: dict[str, Any] = field(default_factory=dict)
     finetune_training_plan: dict[str, Any] = field(default_factory=dict)
     knowledge_embedding_plan: dict[str, Any] = field(default_factory=dict)
     pilot_search_result: dict[str, Any] = field(default_factory=dict)
@@ -50,9 +50,9 @@ class ROIRefinePlan:
     buffer_m: float
     strategy_mode: str
     preferred_expert_family: str | None = None
-    preferred_child_model: str | None = None
+    preferred_expert_model: str | None = None
     candidate_expert_families: list[str] = field(default_factory=list)
-    candidate_child_models: list[str] = field(default_factory=list)
+    candidate_expert_models: list[str] = field(default_factory=list)
     selection_rules: list[str] = field(default_factory=list)
     stop_rules: list[str] = field(default_factory=list)
 
@@ -61,12 +61,12 @@ class ROIRefinePlan:
 
 
 @dataclass
-class ChildModelCallPlan:
+class ExpertModelCallPlan:
     enabled: bool
     planning_stage: str
     routing_mode: str
     preferred_expert_family: str | None = None
-    preferred_child_model: str | None = None
+    preferred_expert_model: str | None = None
     candidate_expert_families: list[str] = field(default_factory=list)
     candidate_models: list[str] = field(default_factory=list)
     routing_rules: list[str] = field(default_factory=list)
@@ -74,6 +74,9 @@ class ChildModelCallPlan:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+ChildModelCallPlan = ExpertModelCallPlan
 
 
 @dataclass

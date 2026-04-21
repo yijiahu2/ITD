@@ -147,12 +147,6 @@ def validate_runtime_cfg(cfg: dict[str, Any]) -> None:
         "output_dir",
         "metrics_json",
         "details_csv",
-        "xiaoban_shp",
-        "xiaoban_id_field",
-        "tree_count_field",
-        "crown_field",
-        "closure_field",
-        "area_ha_field",
         "semantic_prior_script",
         "segmentation_script",
         "conda_sh",
@@ -169,6 +163,19 @@ def validate_runtime_cfg(cfg: dict[str, Any]) -> None:
     for key in required_keys:
         if key not in cfg:
             raise ValueError(f"Missing required config key: {key}")
+
+    optional_reference_group = [
+        "xiaoban_shp",
+        "xiaoban_id_field",
+        "tree_count_field",
+        "crown_field",
+        "closure_field",
+        "area_ha_field",
+    ]
+    if cfg.get("xiaoban_shp"):
+        for key in optional_reference_group[1:]:
+            if key not in cfg:
+                raise ValueError(f"Missing required optional-reference config key: {key}")
 
     if int(cfg["bsize"]) != 256:
         raise ValueError(f"Unsafe bsize={cfg['bsize']}. Must be fixed to 256.")

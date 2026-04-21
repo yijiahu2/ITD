@@ -63,6 +63,27 @@ class DEMProcessingProfile:
 
 
 @dataclass
+class HeightRasterProfile:
+    source_id: str
+    path: str
+    role: str
+    crs: str | None = None
+    width: int | None = None
+    height: int | None = None
+    resolution_x_m: float | None = None
+    resolution_y_m: float | None = None
+    area_ha: float | None = None
+    alignment_with_image: dict[str, Any] = field(default_factory=dict)
+    dom_cropped_path: str | None = None
+    height_summary: dict[str, Any] = field(default_factory=dict)
+    normalization: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class SurveyTableProfile:
     source_id: str
     path: str
@@ -176,6 +197,7 @@ class FusedSegmentationBundle:
 class DataProcessingSummary:
     image_profiles: list[ImagePriorProfile] = field(default_factory=list)
     dem_profiles: list[DEMProcessingProfile] = field(default_factory=list)
+    height_raster_profiles: list[HeightRasterProfile] = field(default_factory=list)
     survey_table_profiles: list[SurveyTableProfile] = field(default_factory=list)
     industry_vector_profiles: list[IndustryVectorProfile] = field(default_factory=list)
     knowledge_profiles: list[KnowledgeProfile] = field(default_factory=list)
@@ -190,6 +212,7 @@ class DataProcessingSummary:
         return {
             "image_profiles": [item.to_dict() for item in self.image_profiles],
             "dem_profiles": [item.to_dict() for item in self.dem_profiles],
+            "height_raster_profiles": [item.to_dict() for item in self.height_raster_profiles],
             "survey_table_profiles": [item.to_dict() for item in self.survey_table_profiles],
             "industry_vector_profiles": [item.to_dict() for item in self.industry_vector_profiles],
             "knowledge_profiles": [item.to_dict() for item in self.knowledge_profiles],

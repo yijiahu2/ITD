@@ -8,6 +8,7 @@ from input_layer.contracts import (
     DEMSource,
     DatasetSource,
     DomainKnowledgeItem,
+    HeightRasterSource,
     IndustryVectorSource,
     InputManifest,
     PublicDatasetSource,
@@ -257,6 +258,69 @@ def _parse_dem_sources(
     return sources
 
 
+def _parse_height_rasters(
+    block_cfg: dict[str, Any],
+    cfg: dict[str, Any],
+    config_dir: Path | None,
+    *,
+    role: str,
+    fallback_keys: tuple[str, ...],
+) -> list[HeightRasterSource]:
+    sources: list[HeightRasterSource] = []
+    raw_items = _as_list(block_cfg.get("rasters"))
+    primary_value = block_cfg.get(fallback_keys[0]) if fallback_keys else None
+    if isinstance(primary_value, (list, tuple, dict)):
+        raw_items = _as_list(primary_value)
+    scalar_fallback_values = []
+    for key in fallback_keys:
+        value = block_cfg.get(key)
+        if not isinstance(value, (list, tuple, dict)):
+            scalar_fallback_values.append(value)
+    for key in fallback_keys:
+        value = cfg.get(key)
+        if not isinstance(value, (list, tuple, dict)):
+            scalar_fallback_values.append(value)
+    fallback = _first_non_empty(*scalar_fallback_values)
+    if fallback and not raw_items:
+        raw_items = [fallback]
+    elif fallback and all(not isinstance(item, str) or item != fallback for item in raw_items):
+        raw_items = [fallback] + raw_items
+
+    for idx, item in enumerate(raw_items, 1):
+        if isinstance(item, dict):
+            path = _resolve_path(item.get("path") or item.get("raster"), config_dir)
+            if not path:
+                continue
+            sources.append(
+                HeightRasterSource(
+                    id=str(item.get("id") or f"{role}_{idx:03d}"),
+                    path=path,
+                    role=role,
+                    resolution_m=_safe_float(item.get("resolution_m")),
+                    crs=item.get("crs"),
+                    vertical_unit=item.get("vertical_unit"),
+                    required=bool(item.get("required", False)),
+                    metadata={
+                        k: v
+                        for k, v in item.items()
+                        if k not in {"id", "path", "raster", "resolution_m", "crs", "vertical_unit", "required"}
+                    },
+                )
+            )
+            continue
+        path = _resolve_path(item, config_dir)
+        if not path:
+            continue
+        sources.append(
+            HeightRasterSource(
+                id=f"{role}_{idx:03d}",
+                path=path,
+                role=role,
+            )
+        )
+    return sources
+
+
 def _parse_survey_tables(
     survey_cfg: dict[str, Any],
     inventory_cfg: dict[str, Any],
@@ -486,6 +550,8 @@ def build_input_manifest(
 
     remote_sensing_cfg = inputs.get("remote_sensing") or {}
     terrain_cfg = inputs.get("terrain") or {}
+    canopy_cfg = inputs.get("canopy") or {}
+    surface_cfg = inputs.get("surface") or {}
     survey_cfg = inputs.get("survey_data") or {}
     inventory_cfg = inputs.get("inventory") or {}
     vector_cfg = inputs.get("industry_vectors") or {}
@@ -496,6 +562,8 @@ def build_input_manifest(
         config_path=config_path,
         remote_sensing=_parse_remote_sensing_sources(remote_sensing_cfg, cfg, config_dir),
         terrain_dem=_parse_dem_sources(terrain_cfg, cfg, config_dir),
+        canopy_height=_parse_height_rasters(canopy_cfg, cfg, config_dir, role="chm", fallback_keys=("chm", "chm_tif")),
+        surface_models=_parse_height_rasters(surface_cfg, cfg, config_dir, role="dsm", fallback_keys=("dsm", "dsm_tif")),
         survey_tables=_parse_survey_tables(survey_cfg, inventory_cfg, cfg, config_dir),
         industry_vectors=_parse_industry_vectors(vector_cfg, survey_cfg, inventory_cfg, cfg, config_dir),
         domain_knowledge_items=_parse_domain_knowledge(knowledge_cfg, cfg, config_dir),
@@ -534,13 +602,21 @@ def normalize_agent_runtime_config(
 
     remote_sensing = inputs.get("remote_sensing") or {}
     terrain = inputs.get("terrain") or {}
+    canopy = inputs.get("canopy") or {}
+    surface = inputs.get("surface") or {}
     survey_data = inputs.get("survey_data") or {}
     inventory = inputs.get("inventory") or {}
     industry_vectors = inputs.get("industry_vectors") or {}
     planning = core_cfg.get("planning") or {}
     llm_gateway = core_cfg.get("llm_gateway") or {}
     data_processing = core_cfg.get("data_processing") or {}
+    runtime_cache_worker = core_cfg.get("runtime_cache_worker") or {}
     segmentation_models = core_cfg.get("segmentation_models") or core_cfg.get("segmentation_model") or {}
+    if isinstance(segmentation_models, dict):
+        if "expert_models" not in segmentation_models and isinstance(segmentation_models.get("child_models"), list):
+            segmentation_models["expert_models"] = deepcopy(segmentation_models["child_models"])
+        if "expert_model_routing" not in planning and isinstance(planning.get("child_model_routing"), dict):
+            planning["expert_model_routing"] = deepcopy(planning["child_model_routing"])
     model_cfg = segmentation.get("model") or {}
     semantic_prior_cfg = (
         data_processing.get("semantic_prior")
@@ -571,6 +647,22 @@ def normalize_agent_runtime_config(
     )
     if first_dem:
         runtime_cfg["dem_tif"] = str(first_dem)
+
+    first_chm = _first_non_empty(
+        canopy.get("chm_tif"),
+        manifest.chm_paths[0] if manifest.chm_paths else None,
+        runtime_cfg.get("chm_tif"),
+    )
+    if first_chm:
+        runtime_cfg["chm_tif"] = str(first_chm)
+
+    first_dsm = _first_non_empty(
+        surface.get("dsm_tif"),
+        manifest.dsm_paths[0] if manifest.dsm_paths else None,
+        runtime_cfg.get("dsm_tif"),
+    )
+    if first_dsm:
+        runtime_cfg["dsm_tif"] = str(first_dsm)
 
     first_vector = _first_non_empty(
         survey_data.get("survey_vector"),
@@ -690,6 +782,7 @@ def normalize_agent_runtime_config(
         "conda_sh",
         "conda_env",
         "work_dir",
+        "use_runtime_cache_worker",
         "xiaoban_id_field",
         "tree_count_field",
         "crown_field",
@@ -700,6 +793,8 @@ def normalize_agent_runtime_config(
         value = _first_non_empty(runtime.get(key), runtime_cfg.get(key))
         if value is not None:
             runtime_cfg[key] = value
+    if runtime_cache_worker.get("enabled") is not None and "use_runtime_cache_worker" not in runtime_cfg:
+        runtime_cfg["use_runtime_cache_worker"] = bool(runtime_cache_worker.get("enabled"))
 
     runtime_cfg["_input_manifest"] = manifest.to_dict()
     runtime_cfg["_input_validation"] = manifest.validation.to_dict() if manifest.validation else None

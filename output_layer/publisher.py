@@ -217,6 +217,8 @@ def publish_segmentation_deliverables(
     *,
     inst_shp: str | None,
     publish_root: str | Path,
+    semantic_prior_tif: str | None = None,
+    semantic_prior_png: str | None = None,
     report_path: str | None = None,
     report_json_path: str | None = None,
     metrics_json: str | None = None,
@@ -234,6 +236,8 @@ def publish_segmentation_deliverables(
             "status": "missing_inst_shp",
             "tree_crowns_shp": None,
             "tree_points_shp": None,
+            "semantic_prior_tif": None,
+            "semantic_prior_png": None,
             "segmentation_visualization_png": None,
             "final_evaluation_report_md": None,
             "final_evaluation_report_json": None,
@@ -241,6 +245,8 @@ def publish_segmentation_deliverables(
 
     tree_crowns_shp = root / "tree_crowns.shp"
     tree_points_shp = root / "tree_points.shp"
+    semantic_prior_tif_copy = root / "M_sem.tif"
+    semantic_prior_png_copy = root / "M_sem.png"
     visualization_png = root / "segmentation_visualization.png"
     report_copy = root / "final_evaluation_report.md"
     report_json_copy = root / "final_evaluation_report.json"
@@ -253,12 +259,16 @@ def publish_segmentation_deliverables(
         visualization_png,
         background_raster=background_raster,
     )
+    semantic_prior_tif_published = _copy_optional_file(semantic_prior_tif, semantic_prior_tif_copy)
+    semantic_prior_png_published = _copy_optional_file(semantic_prior_png, semantic_prior_png_copy)
 
     return {
         "run_name": run_name,
         "publish_root": str(root),
         "tree_crowns_shp": str(tree_crowns_shp),
         "tree_points_shp": str(tree_points_shp) if tree_points_shp.exists() else None,
+        "semantic_prior_tif": semantic_prior_tif_published,
+        "semantic_prior_png": semantic_prior_png_published,
         "segmentation_visualization_png": str(visualization_png) if visualization_png.exists() else None,
         "final_evaluation_report_md": _copy_optional_file(report_path, report_copy),
         "final_evaluation_report_json": _copy_optional_file(report_json_path, report_json_copy),

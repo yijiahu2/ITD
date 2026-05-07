@@ -27,6 +27,7 @@ def _build_benchmark_lines(result: dict[str, Any]) -> list[str]:
         "|---|---:|",
         f"| Precision (IoU=0.50) | {_fmt((result.get('precision') or 0.0) * 100.0)}% |",
         f"| Recall (IoU=0.50) | {_fmt((result.get('recall') or 0.0) * 100.0)}% |",
+        f"| AP@[0.50:0.95] | {_fmt(result.get('ap_50_95'))} |",
         f"| AP50 | {_fmt(result.get('ap50'))} |",
         f"| AP75 | {_fmt(result.get('ap75'))} |",
         f"| F1@0.50 | {_fmt(result.get('f1_score50'))} |",
@@ -188,8 +189,13 @@ def _build_error_decomposition_lines(result: dict[str, Any]) -> list[str]:
         ("over_segmentation_score", error_decomposition.get("over_segmentation_score")),
         ("miss_detection_score", error_decomposition.get("miss_detection_score")),
         ("false_detection_score", error_decomposition.get("false_detection_score")),
-        ("failure_confidence", error_decomposition.get("failure_confidence")),
     ]
+    if "failure_severity" in error_decomposition:
+        rows.append(("failure_severity", error_decomposition.get("failure_severity")))
+    if "failure_pattern_confidence" in error_decomposition:
+        rows.append(("failure_pattern_confidence", error_decomposition.get("failure_pattern_confidence")))
+    elif "failure_confidence" in error_decomposition:
+        rows.append(("failure_confidence", error_decomposition.get("failure_confidence")))
     lines = [
         "",
         "## 错误分解",

@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -38,7 +40,8 @@ def test_reference_score_breakdown_prioritizes_crown_when_count_is_stable() -> N
     breakdown = build_reference_score_breakdown(metrics, cfg=cfg)
 
     assert breakdown["weights"]["mean_crown_width_error_ratio"] > breakdown["weights"]["tree_count_error_ratio"]
-    assert breakdown["normalized_metrics"]["density_error_ratio"] == 0.1
+    assert breakdown["raw_metrics"]["density_error_ratio"] == 0.1
+    assert breakdown["normalized_metrics"]["density_error_ratio"] == 0.5
     assert breakdown["metric_groups"]["inventory_count_alignment"]["metrics"][0]["metric"] == "tree_count_error_ratio"
     assert breakdown["metric_groups"]["crown_boundary_alignment"]["metrics"][0]["metric"] == "mean_crown_width_error_ratio"
     assert breakdown["weighted_terms"]["mean_crown_width_error_ratio"]["contribution"] > breakdown["weighted_terms"]["tree_count_error_ratio"]["contribution"]
@@ -85,6 +88,8 @@ def test_build_roi_assessment_uses_auto_thresholds_when_config_uses_zero(tmp_pat
     assert "tree_count_error_ratio" not in assessment["trigger_metrics"]
     assert assessment["metric_thresholds"]["tree_count_error_ratio"] > assessment["metric_thresholds"]["mean_crown_width_error_ratio"]
     assert assessment["trigger_details"]["mean_crown_width_error_ratio"]["category"] == "crown_boundary_alignment"
+    assert "reference_error_score" in assessment["trigger_metrics"]
+    assert assessment["current_error_score"] is not None
 
 
 def test_detail_ranker_keeps_boundary_heavy_case_at_top(tmp_path) -> None:
@@ -99,3 +104,19 @@ def test_detail_ranker_keeps_boundary_heavy_case_at_top(tmp_path) -> None:
     summary = summarize_details_csv(str(details_csv), top_k=1)
 
     assert summary["top_k_reference_units"][0]["reference_unit_id"] == "boundary_case"
+
+
+def test_reference_score_breakdown_normalizes_closure_percentage_scale() -> None:
+    metrics = {
+        "tree_count_error_ratio": 0.05,
+        "mean_crown_width_error_ratio": 0.10,
+        "pred_cover_ratio": 62.0,
+        "expected_closure": 72.0,
+        "density_error_abs": 20.0,
+        "expected_density": 500.0,
+    }
+
+    breakdown = build_reference_score_breakdown(metrics)
+
+    assert breakdown["raw_metrics"]["closure_error_abs"] == pytest.approx(0.10)
+    assert breakdown["normalized_metrics"]["closure_error_abs"] == pytest.approx(1.0)

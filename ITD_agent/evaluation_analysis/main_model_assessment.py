@@ -8,6 +8,13 @@ from .online_quality_engine import evaluate_online_quality
 from .reference_quality_engine import evaluate_reference_quality
 
 
+def _resolve_online_quality_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    evaluation_cfg = cfg.get("evaluation") or {}
+    analysis_cfg = evaluation_cfg.get("analysis") or {}
+    online_cfg = analysis_cfg.get("online_quality") or {}
+    return dict(online_cfg if isinstance(online_cfg, dict) else {})
+
+
 def _has_reference_inventory(cfg: dict[str, Any]) -> bool:
     return bool(
         cfg.get("reference_vector_path")
@@ -30,6 +37,7 @@ def evaluate_main_model_assessment(
         m_sem_tif=str(cfg.get("output_dir") and (cfg["output_dir"] + "/M_sem.tif")) if cfg.get("output_dir") else None,
         chm_tif=cfg.get("chm_tif"),
         patch_raster=cfg.get("input_image"),
+        quality_cfg=_resolve_online_quality_cfg(cfg),
     )
     if not _has_reference_inventory(cfg):
         result = {

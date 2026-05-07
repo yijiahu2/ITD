@@ -9,6 +9,13 @@ from .contracts import FinalAssessmentResult
 from .decision_flags import build_decision_flags
 from .flow_decisions import build_final_benchmark_flow_decision, build_final_reference_flow_decision
 from .online_quality_engine import evaluate_online_quality
+from .reference_quality_engine import build_reference_score_breakdown
+
+
+def _clamp01(value: float | None) -> float:
+    if value is None:
+        return 0.0
+    return float(min(max(float(value), 0.0), 1.0))
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -19,6 +26,13 @@ def _load_json(path: str | Path) -> dict[str, Any]:
 def _normalize_report_cfg(runtime_cfg: dict[str, Any] | None) -> dict[str, Any]:
     evaluation_cfg = (runtime_cfg or {}).get("evaluation") or {}
     return evaluation_cfg.get("final_report") or {}
+
+
+def _resolve_online_quality_cfg(runtime_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    evaluation_cfg = (runtime_cfg or {}).get("evaluation") or {}
+    analysis_cfg = evaluation_cfg.get("analysis") or {}
+    online_cfg = analysis_cfg.get("online_quality") or {}
+    return dict(online_cfg if isinstance(online_cfg, dict) else {})
 
 
 def _resolve_inst_shp(summary: dict[str, Any]) -> str | None:
@@ -62,6 +76,7 @@ def _build_online_quality_result(
     summary: dict[str, Any],
     *,
     runtime_cfg: dict[str, Any] | None = None,
+    reference_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     inst_shp = _resolve_inst_shp(summary)
     if not inst_shp or not Path(inst_shp).exists():
@@ -71,6 +86,8 @@ def _build_online_quality_result(
         m_sem_tif=_resolve_semantic_prior_tif(summary),
         chm_tif=_resolve_chm_tif(summary, runtime_cfg=runtime_cfg),
         patch_raster=_resolve_patch_raster(summary, runtime_cfg=runtime_cfg),
+        quality_cfg=_resolve_online_quality_cfg(runtime_cfg),
+        reference_metrics=reference_metrics,
     )
 
 
@@ -114,7 +131,12 @@ def evaluate_reference_quality_result(
         "metrics_source": summary.get("metrics_json") or (summary.get("evaluation") or {}).get("metrics_json"),
         "selected_metrics": selected,
     }
-    online_quality = _build_online_quality_result(summary, runtime_cfg=runtime_cfg)
+    score_breakdown = build_reference_score_breakdown(metrics, cfg=runtime_cfg)
+    reference_error_score = score_breakdown.get("score")
+    result["score_breakdown"] = score_breakdown
+    result["reference_error_score"] = reference_error_score
+    result["reference_quality_score"] = None if reference_error_score is None else float(1.0 - _clamp01(reference_error_score))
+    online_quality = _build_online_quality_result(summary, runtime_cfg=runtime_cfg, reference_metrics=metrics)
     if isinstance(online_quality, dict) and online_quality:
         result["online_quality"] = online_quality
     result["decision_flags"] = build_decision_flags(result, runtime_cfg=runtime_cfg)

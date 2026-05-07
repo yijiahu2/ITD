@@ -5,7 +5,7 @@ from typing import Any
 from .contracts import ROIAssessment
 from .detail_ranker import summarize_details_csv
 from .flow_decisions import build_roi_flow_decision
-from .reference_quality_engine import METRIC_CATEGORIES, build_reference_score_breakdown
+from .reference_quality_engine import DEFAULT_ERROR_TOLERANCES, METRIC_CATEGORIES, build_reference_score_breakdown
 
 
 def _normalize_bool(v: Any) -> bool:
@@ -48,19 +48,18 @@ def _resolve_metric_thresholds(
     round_idx: int,
 ) -> dict[str, float]:
     roi_cfg = get_roi_refine_block(cfg)
-    tree_error = float(metrics.get("tree_count_error_ratio") or 0.0)
+    round_scale = max(float(roi_cfg.get("round_threshold_decay", 0.95)) ** max(int(round_idx), 0), 0.5)
     defaults = {
-        "tree_count_error_ratio": 0.18 if tree_error <= 0.12 else 0.10,
-        "mean_crown_width_error_ratio": 0.12 if tree_error <= 0.12 else 0.18,
-        "closure_error_abs": 0.06 if tree_error <= 0.12 else 0.10,
+        "tree_count_error_ratio": DEFAULT_ERROR_TOLERANCES["tree_count_error_ratio"] * round_scale,
+        "mean_crown_width_error_ratio": DEFAULT_ERROR_TOLERANCES["mean_crown_width_error_ratio"] * round_scale,
+        "closure_error_abs": DEFAULT_ERROR_TOLERANCES["closure_error_abs"] * round_scale,
     }
-    if round_idx > 0:
-        defaults["mean_crown_width_error_ratio"] = max(defaults["mean_crown_width_error_ratio"] - 0.01, 0.08)
-        defaults["closure_error_abs"] = max(defaults["closure_error_abs"] - 0.01, 0.04)
 
     resolved: dict[str, float] = {}
     for key, default_value in defaults.items():
         raw = roi_cfg.get(key)
+        if raw in (None, ""):
+            raw = roi_cfg.get(f"{key}_thr")
         value = float(raw) if raw not in (None, "") else None
         resolved[key] = default_value if value is None or value <= 0 else value
     return resolved
@@ -109,14 +108,15 @@ def build_roi_assessment(
     max_rounds = int(roi_cfg.get("max_rounds", 2))
     top_k = int(roi_cfg.get("top_k", 3))
     min_problem_cases = int(roi_cfg.get("min_problem_cases", 1))
-    improvement_epsilon = float(roi_cfg.get("improvement_epsilon", 0.01))
+    min_error_reduction = float(roi_cfg.get("min_error_reduction", roi_cfg.get("improvement_epsilon", 0.0)))
+    score_threshold = float(roi_cfg.get("reference_error_score_threshold", 0.55))
     metric_thresholds = _resolve_metric_thresholds(cfg, metrics=metrics, round_idx=round_idx)
 
     tree_ratio = float(metrics.get("tree_count_error_ratio") or 0.0)
     crown_ratio = float(metrics.get("mean_crown_width_error_ratio") or 0.0)
     closure_abs = float(metrics.get("closure_error_abs") or 0.0)
     score_breakdown = build_reference_score_breakdown(metrics, cfg=cfg)
-    current_score = score_breakdown.get("score")
+    current_error_score = score_breakdown.get("score")
     details_summary = summarize_details_csv(details_csv, top_k=top_k, cfg=cfg)
     top_cases = details_summary.get("top_k_reference_units") or []
 
@@ -159,6 +159,15 @@ def build_roi_assessment(
             "value": closure_abs,
             "threshold": metric_thresholds["closure_error_abs"],
         }
+    if current_error_score is not None and current_error_score >= score_threshold:
+        triggers.append("reference_error_score")
+        trigger_details["reference_error_score"] = {
+            "category": "reference_quality_gate",
+            "label": "Reference error score",
+            "direction": "higher_error_requires_refinement",
+            "value": current_error_score,
+            "threshold": score_threshold,
+        }
     if len(resolved_candidates) >= 1:
         triggers.append("problem_roi_cases")
         trigger_details["problem_roi_cases"] = {
@@ -169,25 +178,26 @@ def build_roi_assessment(
             "threshold": min_problem_cases,
         }
 
-    improvement = None
-    if current_score is not None and previous_score is not None:
-        improvement = previous_score - current_score
+    previous_error_score = previous_score
+    error_reduction = None
+    if current_error_score is not None and previous_error_score is not None:
+        error_reduction = previous_error_score - current_error_score
 
     heuristic_continue = (
         enabled
         and round_idx < max_rounds
         and bool(triggers)
         and len(resolved_candidates) >= 1
-        and (improvement is None or improvement >= -improvement_epsilon)
+        and (error_reduction is None or error_reduction > min_error_reduction)
     )
     quality_label = "acceptable" if not heuristic_continue else "needs_roi_refinement"
     payload = ROIAssessment(
         assessment_phase="roi_assessment",
         round_idx=round_idx,
         quality_label=quality_label,
-        current_score=current_score,
-        previous_score=previous_score,
-        improvement=improvement,
+        current_score=current_error_score,
+        previous_score=previous_error_score,
+        improvement=error_reduction,
         trigger_metrics=triggers,
         details_summary=details_summary,
         candidate_rois=resolved_candidates,
@@ -202,15 +212,23 @@ def build_roi_assessment(
             "max_rounds": max_rounds,
             "top_k": top_k,
             "min_problem_cases": min_problem_cases,
-            "improvement_epsilon": improvement_epsilon,
+            "min_error_reduction": min_error_reduction,
+            "reference_error_score_threshold": score_threshold,
             "heuristic_continue": heuristic_continue,
             "metric_thresholds": metric_thresholds,
             "trigger_details": trigger_details,
             "score_breakdown": score_breakdown,
             "candidate_source": candidate_source,
             "signal_roi_summary": signal_summary,
+            "current_error_score": current_error_score,
+            "previous_error_score": previous_error_score,
+            "error_reduction": error_reduction,
         }
     )
+    result["current_score"] = current_error_score
+    result["previous_score"] = previous_error_score
+    result["improvement"] = error_reduction
+    result["improvement_epsilon"] = min_error_reduction
     result["flow_decision"] = build_roi_flow_decision(result)
     return result
 

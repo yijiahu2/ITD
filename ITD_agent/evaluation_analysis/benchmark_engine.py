@@ -69,7 +69,15 @@ def _build_candidate_rows(
             iou = inter_area / union_area if union_area > 0 else 0.0
             if iou <= 0.0:
                 continue
-            matches.append({"gt_idx": int(gt_idx), "iou": float(iou), "gt_area": float(gt_geom.area)})
+            matches.append(
+                {
+                    "gt_idx": int(gt_idx),
+                    "iou": float(iou),
+                    "gt_area": float(gt_geom.area),
+                    "inter_area": inter_area,
+                    "intersection_over_gt_area": float(inter_area / max(float(gt_geom.area), 1.0e-6)),
+                }
+            )
         matches.sort(key=lambda item: (-float(item["iou"]), int(item["gt_idx"])))
         candidate_rows.append(
             {
@@ -96,7 +104,14 @@ def _ap_from_pr(recalls: np.ndarray, precisions: np.ndarray) -> float:
 
 def _compute_area_r2(tp_rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not tp_rows:
-        return {"num_matched_crowns": 0, "mae": None, "rmse": None, "rmse_percent": None, "r2": None}
+        return {
+            "num_matched_crowns": 0,
+            "mae": None,
+            "rmse": None,
+            "rmse_percent": None,
+            "r2": None,
+            "area_regression_unreliable_flag": True,
+        }
     gt_area = np.array([float(row["matched_gt_area"]) for row in tp_rows], dtype=np.float64)
     pred_area = np.array([float(row["pred_area"]) for row in tp_rows], dtype=np.float64)
     diff = gt_area - pred_area
@@ -112,6 +127,7 @@ def _compute_area_r2(tp_rows: list[dict[str, Any]]) -> dict[str, Any]:
         "rmse": rmse,
         "rmse_percent": float(rmse_ratio * 100.0),
         "r2": r2,
+        "area_regression_unreliable_flag": bool(len(tp_rows) < 5),
     }
 
 
@@ -194,11 +210,12 @@ def _compute_error_decomposition(
     pred_count: int,
     gt_count: int,
     iou_050: dict[str, Any],
+    overlap_ratio_thr: float = 0.10,
 ) -> dict[str, Any]:
     pred_multi_gt = 0
     gt_multi_pred: dict[int, int] = {}
     for pred in candidate_rows:
-        valid_matches = [item for item in pred["matches"] if float(item["iou"]) >= 0.10]
+        valid_matches = [item for item in pred["matches"] if float(item.get("intersection_over_gt_area") or 0.0) >= float(overlap_ratio_thr)]
         unique_gt = {int(item["gt_idx"]) for item in valid_matches}
         if len(unique_gt) > 1:
             pred_multi_gt += 1
@@ -206,23 +223,26 @@ def _compute_error_decomposition(
             gt_idx = int(item["gt_idx"])
             gt_multi_pred[gt_idx] = int(gt_multi_pred.get(gt_idx, 0)) + 1
 
-    under_segmentation_score = float(pred_multi_gt / max(pred_count, 1))
-    over_segmentation_score = float(sum(1 for count in gt_multi_pred.values() if count > 1) / max(gt_count, 1))
-    miss_detection_score = float(iou_050["fn"] / max(gt_count, 1))
-    false_detection_score = float(iou_050["fp"] / max(pred_count, 1))
+    under_segmentation_score = 0.0 if pred_count <= 0 else float(pred_multi_gt / pred_count)
+    over_segmentation_score = 0.0 if gt_count <= 0 else float(sum(1 for count in gt_multi_pred.values() if count > 1) / gt_count)
+    miss_detection_score = 0.0 if gt_count <= 0 else float(iou_050["fn"] / gt_count)
+    false_detection_score = 0.0 if pred_count <= 0 else float(iou_050["fp"] / pred_count)
     sorted_scores = sorted(
         [under_segmentation_score, over_segmentation_score, miss_detection_score, false_detection_score],
         reverse=True,
     )
     top = sorted_scores[0] if sorted_scores else 0.0
     second = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
-    failure_confidence = float(min(max(top + ((top - second) * 0.35), 0.0), 1.0))
+    failure_severity = float(top)
+    failure_pattern_confidence = float(min(max(top - second, 0.0), 1.0))
     return {
         "under_segmentation_score": under_segmentation_score,
         "over_segmentation_score": over_segmentation_score,
         "miss_detection_score": miss_detection_score,
         "false_detection_score": false_detection_score,
-        "failure_confidence": failure_confidence,
+        "failure_severity": failure_severity,
+        "failure_pattern_confidence": failure_pattern_confidence,
+        "overlap_ratio_threshold": float(overlap_ratio_thr),
     }
 
 
@@ -231,6 +251,7 @@ def evaluate_benchmark_vector_result(
     pred_shp: str,
     gt_shp: str,
     score_field: str | None = None,
+    error_overlap_ratio_thr: float = 0.10,
 ) -> dict[str, Any]:
     pred_gdf = gpd.read_file(pred_shp)
     gt_gdf = gpd.read_file(gt_shp)
@@ -243,11 +264,14 @@ def evaluate_benchmark_vector_result(
     total_pred = int(len(pred_gdf))
     iou_050 = _compute_pr_ap(candidate_rows, total_gt=total_gt, iou_thr=0.50)
     iou_075 = _compute_pr_ap(candidate_rows, total_gt=total_gt, iou_thr=0.75)
+    ap_thresholds = [round(value, 2) for value in np.arange(0.50, 1.00, 0.05)]
+    ap_by_threshold = {f"{thr:.2f}": _compute_pr_ap(candidate_rows, total_gt=total_gt, iou_thr=thr)["ap"] for thr in ap_thresholds}
     error_decomposition = _compute_error_decomposition(
         candidate_rows=candidate_rows,
         pred_count=total_pred,
         gt_count=total_gt,
         iou_050=iou_050,
+        overlap_ratio_thr=error_overlap_ratio_thr,
     )
     return {
         "evaluation_mode": "benchmark",
@@ -259,6 +283,8 @@ def evaluate_benchmark_vector_result(
         "score_source": score_source,
         "precision": iou_050["precision"],
         "recall": iou_050["recall"],
+        "ap_50_95": float(np.mean(list(ap_by_threshold.values()))) if ap_by_threshold else 0.0,
+        "ap_by_threshold": ap_by_threshold,
         "ap50": iou_050["ap"],
         "ap75": iou_075["ap"],
         "f1_score50": _f1_score(iou_050["precision"], iou_050["recall"]),
@@ -277,6 +303,8 @@ def evaluate_benchmark_vector_result(
         "rmse": iou_050["crown_area"]["rmse"],
         "rmse_percent": iou_050["crown_area"]["rmse_percent"],
         "r2": iou_050["crown_area"]["r2"],
+        "num_matched_crowns": iou_050["crown_area"]["num_matched_crowns"],
+        "area_regression_unreliable_flag": iou_050["crown_area"]["area_regression_unreliable_flag"],
         "crown_area_iou_0_50": iou_050["crown_area"],
         "crown_area_iou_0_75": iou_075["crown_area"],
         "error_decomposition": error_decomposition,

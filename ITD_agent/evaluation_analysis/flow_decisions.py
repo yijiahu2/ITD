@@ -28,13 +28,21 @@ def build_main_model_flow_decision(assessment: dict[str, Any]) -> dict[str, Any]
     metrics = assessment.get("metrics") or {}
     online_quality = assessment.get("online_quality") or {}
     decision_flags = assessment.get("decision_flags") or {}
+    reference_error_score = assessment.get("reference_error_score")
+    if reference_error_score is None and assessment.get("assessment_mode") != "online_only":
+        reference_error_score = assessment.get("quality_score")
+    online_quality_score = online_quality.get("quality_score")
+    if online_quality_score is None and assessment.get("assessment_mode") == "online_only":
+        online_quality_score = assessment.get("quality_score")
     return build_flow_decision(
         decision_stage="main_model_assessment",
         decision_question="主模型第一版结果是否可接受，是否需要进入 ROI？",
         core_metrics={
             "quality_score": assessment.get("quality_score"),
-            "reference_error_score": assessment.get("quality_score"),
-            "online_quality_score": online_quality.get("quality_score"),
+            "reference_error_score": reference_error_score,
+            "reference_quality_score": assessment.get("reference_quality_score"),
+            "online_quality_score": online_quality_score,
+            "online_risk_score": online_quality.get("online_risk_score"),
             **_pick(
                 decision_flags,
                 [
@@ -87,6 +95,9 @@ def build_roi_flow_decision(assessment: dict[str, Any]) -> dict[str, Any]:
             "heuristic_continue": bool(assessment.get("heuristic_continue", False)),
             "trigger_metrics": list(assessment.get("trigger_metrics") or []),
             "candidate_roi_count": len(assessment.get("candidate_rois") or []),
+            "current_error_score": assessment.get("current_error_score", assessment.get("current_score")),
+            "previous_error_score": assessment.get("previous_error_score", assessment.get("previous_score")),
+            "error_reduction": assessment.get("error_reduction", assessment.get("improvement")),
             "current_score": assessment.get("current_score"),
             "previous_score": assessment.get("previous_score"),
             "improvement": assessment.get("improvement"),
@@ -113,6 +124,9 @@ def build_expert_acceptance_flow_decision(assessment: dict[str, Any]) -> dict[st
         decision_stage="expert_model_acceptance",
         decision_question="专家模型或局部细化结果是否优于旧结果？",
         core_metrics={
+            "current_error_score": assessment.get("current_error_score", assessment.get("current_score")),
+            "previous_error_score": assessment.get("previous_error_score", assessment.get("previous_score")),
+            "error_reduction": assessment.get("error_reduction", assessment.get("improvement")),
             "current_score": assessment.get("current_score"),
             "previous_score": assessment.get("previous_score"),
             "improvement": assessment.get("improvement"),
@@ -139,6 +153,7 @@ def build_expert_acceptance_flow_decision(assessment: dict[str, Any]) -> dict[st
 def build_final_reference_flow_decision(result: dict[str, Any]) -> dict[str, Any]:
     selected = result.get("selected_metrics") or {}
     decision_flags = result.get("decision_flags") or {}
+    online_quality = result.get("online_quality") or {}
     return build_flow_decision(
         decision_stage="final_result_assessment",
         decision_question="最终结果质量如何？",
@@ -163,13 +178,17 @@ def build_final_reference_flow_decision(result: dict[str, Any]) -> dict[str, Any
                     "density_error_abs",
                 ],
             ),
-            "online_quality_score": (result.get("online_quality") or {}).get("quality_score"),
+            "reference_error_score": result.get("reference_error_score"),
+            "reference_quality_score": result.get("reference_quality_score"),
+            "online_quality_score": online_quality.get("quality_score"),
+            "online_risk_score": online_quality.get("online_risk_score"),
         },
         evidence_metrics={
             "selected_metrics": selected,
-            "online_quality": result.get("online_quality") or {},
+            "online_quality": online_quality,
             "decision_flags": decision_flags,
             "metrics_source": result.get("metrics_source"),
+            "score_breakdown": result.get("score_breakdown") or {},
         },
     )
 
@@ -195,6 +214,7 @@ def build_final_benchmark_flow_decision(result: dict[str, Any]) -> dict[str, Any
                 [
                     "precision",
                     "recall",
+                    "ap_50_95",
                     "ap50",
                     "ap75",
                     "f1_score50",
@@ -203,6 +223,8 @@ def build_final_benchmark_flow_decision(result: dict[str, Any]) -> dict[str, Any
                     "rmse",
                     "rmse_percent",
                     "r2",
+                    "num_matched_crowns",
+                    "area_regression_unreliable_flag",
                 ],
             ),
         },
@@ -239,6 +261,10 @@ def build_finetune_effect_flow_decision(summary: dict[str, Any]) -> dict[str, An
                 "mean_gain_crown",
                 "mean_gain_closure",
                 "mean_gain_density",
+                "mean_normalized_gain_tree_count",
+                "mean_normalized_gain_crown",
+                "mean_normalized_gain_closure",
+                "mean_normalized_gain_density",
                 "num_tree_improved",
                 "num_crown_improved",
                 "num_closure_improved",

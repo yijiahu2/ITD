@@ -24,12 +24,17 @@ def test_benchmark_result_omits_duplicate_precision_recall_aliases(tmp_path: Pat
 
     assert result["precision"] == 1.0
     assert result["recall"] == 1.0
+    assert result["ap_50_95"] == 1.0
     assert result["ap50"] == 1.0
     assert result["ap75"] == 1.0
     assert result["f1_score50"] == 1.0
     assert result["mean_iou_matched"] == 1.0
+    assert result["num_matched_crowns"] == 1
+    assert result["area_regression_unreliable_flag"] is True
     assert result["error_decomposition"]["miss_detection_score"] == 0.0
     assert result["error_decomposition"]["false_detection_score"] == 0.0
+    assert result["error_decomposition"]["failure_severity"] == 0.0
+    assert result["error_decomposition"]["failure_pattern_confidence"] == 0.0
     for duplicate_key in [
         "precision_percent",
         "recall_percent",

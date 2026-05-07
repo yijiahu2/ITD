@@ -702,6 +702,7 @@ def evaluate_merged_result(
             inst_shp=merged_shp,
             m_sem_tif=str(Path(base_cfg["output_dir"]) / "M_sem.tif"),
             chm_tif=base_cfg.get("chm_tif"),
+            quality_cfg=((base_cfg.get("evaluation") or {}).get("analysis") or {}).get("online_quality") or {},
         )
         save_json(online_eval, merged_metrics_json)
         pd.DataFrame([]).to_csv(merged_details_csv, index=False)

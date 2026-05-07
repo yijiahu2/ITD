@@ -10,6 +10,13 @@ from .contracts import FinetuneEffectAssessment
 from .flow_decisions import build_finetune_effect_flow_decision
 
 
+def _safe_normalized_gain(before: float | None, after: float | None) -> float | None:
+    if before is None or after is None:
+        return None
+    denominator = max(abs(float(before)), 1.0e-6)
+    return float((float(before) - float(after)) / denominator)
+
+
 def _ensure_dir(path: str | Path) -> Path:
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
@@ -108,18 +115,31 @@ def _build_benchmark_gain(
 ) -> dict[str, Any]:
     before = evaluate_benchmark_vector_result(pred_shp=before_pred_shp, gt_shp=gt_shp, score_field=score_field)
     after = evaluate_benchmark_vector_result(pred_shp=after_pred_shp, gt_shp=gt_shp, score_field=score_field)
-    metric_keys = ["precision", "recall", "ap50", "ap75", "mae", "rmse", "rmse_percent", "r2"]
+    quality_metric_keys = ["precision", "recall", "ap_50_95", "ap50", "ap75", "f1_score50", "mean_iou_matched", "r2"]
+    error_metric_keys = ["mae", "rmse", "rmse_percent"]
+    quality_metric_delta: dict[str, Any] = {}
+    error_metric_gain: dict[str, Any] = {}
     delta: dict[str, Any] = {}
-    for key in metric_keys:
+    for key in quality_metric_keys:
         before_v = before.get(key)
         after_v = after.get(key)
         if before_v is None or after_v is None:
+            quality_metric_delta[key] = None
             delta[key] = None
             continue
         raw_delta = float(after_v) - float(before_v)
-        if key in {"mae", "rmse", "rmse_percent"}:
-            raw_delta = float(before_v) - float(after_v)
+        quality_metric_delta[key] = raw_delta
         delta[key] = raw_delta
+    for key in error_metric_keys:
+        before_v = before.get(key)
+        after_v = after.get(key)
+        if before_v is None or after_v is None:
+            error_metric_gain[key] = None
+            delta[key] = None
+            continue
+        raw_gain = float(before_v) - float(after_v)
+        error_metric_gain[key] = raw_gain
+        delta[key] = raw_gain
     return {
         "evaluation_mode": "benchmark",
         "ground_truth_file": gt_shp,
@@ -127,6 +147,8 @@ def _build_benchmark_gain(
         "after_prediction_file": after_pred_shp,
         "before": before,
         "after": after,
+        "quality_metric_delta": quality_metric_delta,
+        "error_metric_gain": error_metric_gain,
         "delta": delta,
     }
 
@@ -224,6 +246,11 @@ def compare_finetune_effect(
     ]:
         if before_col in merged.columns and after_col in merged.columns:
             merged[out_col] = merged[before_col] - merged[after_col]
+            normalized_col = out_col.replace("gain_", "normalized_gain_")
+            merged[normalized_col] = merged.apply(
+                lambda row: _safe_normalized_gain(row.get(before_col), row.get(after_col)),
+                axis=1,
+            )
 
     compare_csv = out_root / "finetune_compare.csv"
     merged.to_csv(compare_csv, index=False)
@@ -239,6 +266,8 @@ def compare_finetune_effect(
                 {
                     **key_dict,
                     "num_samples": int(len(sub)),
+                    "n_units": int(len(sub)),
+                    "unstable_flag": bool(len(sub) < 5),
                     "mean_gain_tree_count": float(sub["gain_tree_count"].mean()) if "gain_tree_count" in sub.columns else None,
                     "mean_gain_crown": float(sub["gain_crown"].mean()) if "gain_crown" in sub.columns else None,
                     "mean_gain_closure": float(sub["gain_closure"].mean()) if "gain_closure" in sub.columns else None,
@@ -253,10 +282,22 @@ def compare_finetune_effect(
         "mean_gain_crown": float(merged["gain_crown"].mean()) if "gain_crown" in merged.columns and len(merged) > 0 else None,
         "mean_gain_closure": float(merged["gain_closure"].mean()) if "gain_closure" in merged.columns and len(merged) > 0 else None,
         "mean_gain_density": float(merged["gain_density"].mean()) if "gain_density" in merged.columns and len(merged) > 0 else None,
+        "mean_normalized_gain_tree_count": float(merged["normalized_gain_tree_count"].mean()) if "normalized_gain_tree_count" in merged.columns and len(merged) > 0 else None,
+        "mean_normalized_gain_crown": float(merged["normalized_gain_crown"].mean()) if "normalized_gain_crown" in merged.columns and len(merged) > 0 else None,
+        "mean_normalized_gain_closure": float(merged["normalized_gain_closure"].mean()) if "normalized_gain_closure" in merged.columns and len(merged) > 0 else None,
+        "mean_normalized_gain_density": float(merged["normalized_gain_density"].mean()) if "normalized_gain_density" in merged.columns and len(merged) > 0 else None,
+        "median_gain_tree_count": float(merged["gain_tree_count"].median()) if "gain_tree_count" in merged.columns and len(merged) > 0 else None,
+        "median_gain_crown": float(merged["gain_crown"].median()) if "gain_crown" in merged.columns and len(merged) > 0 else None,
+        "median_gain_closure": float(merged["gain_closure"].median()) if "gain_closure" in merged.columns and len(merged) > 0 else None,
+        "median_gain_density": float(merged["gain_density"].median()) if "gain_density" in merged.columns and len(merged) > 0 else None,
         "num_tree_improved": int((merged["gain_tree_count"] > 0).sum()) if "gain_tree_count" in merged.columns else None,
         "num_crown_improved": int((merged["gain_crown"] > 0).sum()) if "gain_crown" in merged.columns else None,
         "num_closure_improved": int((merged["gain_closure"] > 0).sum()) if "gain_closure" in merged.columns else None,
         "num_density_improved": int((merged["gain_density"] > 0).sum()) if "gain_density" in merged.columns else None,
+        "worse_tree_count": int((merged["gain_tree_count"] < 0).sum()) if "gain_tree_count" in merged.columns else None,
+        "worse_crown": int((merged["gain_crown"] < 0).sum()) if "gain_crown" in merged.columns else None,
+        "worse_closure": int((merged["gain_closure"] < 0).sum()) if "gain_closure" in merged.columns else None,
+        "worse_density": int((merged["gain_density"] < 0).sum()) if "gain_density" in merged.columns else None,
         "terrain_group_cols": terrain_group_cols,
         "stratified_gain": stratified_gain,
     }

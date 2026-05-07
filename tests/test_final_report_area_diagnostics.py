@@ -168,7 +168,8 @@ def test_experiment_report_renders_benchmark_error_decomposition(tmp_path: Path)
                 "over_segmentation_score": 0.08,
                 "miss_detection_score": 0.10,
                 "false_detection_score": 0.09,
-                "failure_confidence": 0.127,
+                "failure_severity": 0.12,
+                "failure_pattern_confidence": 0.03,
             },
             "decision_flags": {
                 "overall_score": 0.66,
@@ -185,4 +186,6 @@ def test_experiment_report_renders_benchmark_error_decomposition(tmp_path: Path)
 
     assert "## 错误分解" in content
     assert "| under_segmentation_score | 0.1200 |" in content
+    assert "| failure_severity | 0.1200 |" in content
+    assert "| failure_pattern_confidence | 0.0300 |" in content
     assert "| F1@0.50 | 0.7742 |" in content

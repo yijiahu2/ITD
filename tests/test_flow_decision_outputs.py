@@ -93,8 +93,10 @@ def test_final_reference_assessment_outputs_flow_decision() -> None:
     assert flow["decision_question"] == "最终结果质量如何？"
     assert flow["core_metrics"]["tree_count_error_ratio"] == 0.05
     assert "overall_score" in flow["core_metrics"]
+    assert "reference_error_score" in flow["core_metrics"]
+    assert "reference_quality_score" in flow["core_metrics"]
     assert "selected_metrics" in flow["evidence_metrics"]
-    assert result["decision_flags"]["quality_pass_flag"] is True
+    assert result["decision_flags"]["quality_pass_flag"] is False
 
 
 def test_finetune_effect_outputs_flow_decision(tmp_path: Path) -> None:

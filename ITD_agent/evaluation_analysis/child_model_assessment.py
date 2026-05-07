@@ -50,6 +50,9 @@ def evaluate_expert_model_assessment(
         roi_assessment=roi_assessment,
     )
     result = payload.to_dict()
+    result["current_error_score"] = current_score
+    result["previous_error_score"] = previous_score
+    result["error_reduction"] = roi_assessment.get("error_reduction", roi_assessment.get("improvement"))
     previous_overall_score = None if previous_score is None else max(0.0, min(1.0, 1.0 - float(previous_score)))
     current_result = {"selected_metrics": metrics}
     result["decision_flags"] = build_decision_flags(current_result, runtime_cfg=cfg, previous_overall_score=previous_overall_score)

@@ -22,6 +22,61 @@ def _safe_quantile(values: np.ndarray, q: float) -> float | None:
     return float(np.quantile(values, q))
 
 
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _resolve_quality_cfg(quality_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    return dict(quality_cfg or {})
+
+
+def _resolve_expected_crown_width(
+    *,
+    widths: np.ndarray,
+    reference_metrics: dict[str, Any] | None,
+    quality_cfg: dict[str, Any],
+) -> tuple[float | None, str]:
+    configured = _safe_float(quality_cfg.get("expected_mean_crown_width_m"))
+    if configured is not None and configured > 0:
+        return float(configured), "configured"
+    referenced = _safe_float((reference_metrics or {}).get("expected_mean_crown_width"))
+    if referenced is not None and referenced > 0:
+        return float(referenced), "reference_metrics"
+    p90_width = _safe_quantile(widths, 0.90)
+    if p90_width is not None and p90_width > 0:
+        return float(p90_width), "observed_p90_width"
+    median_width = float(np.median(widths)) if widths.size > 0 else None
+    if median_width is not None and median_width > 0:
+        return float(median_width), "observed_median_width"
+    return None, "unavailable"
+
+
+def _resolve_expected_crown_area(
+    *,
+    areas: np.ndarray,
+    expected_mean_crown_width_m: float | None,
+    quality_cfg: dict[str, Any],
+) -> tuple[float | None, str]:
+    configured = _safe_float(quality_cfg.get("expected_crown_area_m2"))
+    if configured is not None and configured > 0:
+        return float(configured), "configured"
+    if expected_mean_crown_width_m is not None and expected_mean_crown_width_m > 0:
+        radius = expected_mean_crown_width_m / 2.0
+        return float(np.pi * radius * radius), "derived_from_width"
+    p10_area = _safe_quantile(areas, 0.10)
+    if p10_area is not None and p10_area > 0:
+        return float(p10_area), "observed_p10_area"
+    median_area = float(np.median(areas)) if areas.size > 0 else None
+    if median_area is not None and median_area > 0:
+        return float(median_area), "observed_median_area"
+    return None, "unavailable"
+
+
 def _resolve_patch_context(
     *,
     patch_raster: str | None = None,
@@ -35,12 +90,15 @@ def _resolve_patch_context(
         bounds = src.bounds
         pixel_area = abs(src.transform.a * src.transform.e - src.transform.b * src.transform.d)
         patch_area = float(src.width * src.height * pixel_area)
+        pixel_resolution_m = float(np.sqrt(pixel_area)) if pixel_area > 0 else None
         geom = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
 
     return {
         "available": True,
         "patch_raster": str(raster_path),
         "patch_area_m2": patch_area,
+        "pixel_area_m2": pixel_area,
+        "pixel_resolution_m": pixel_resolution_m,
         "patch_bounds": [float(bounds.left), float(bounds.bottom), float(bounds.right), float(bounds.top)],
         "patch_crs": None,
         "patch_geometry": geom,
@@ -70,7 +128,7 @@ def _semantic_instance_consistency(
     *,
     patch_area_m2: float | None = None,
 ) -> dict[str, Any]:
-    if not m_sem_tif or not Path(m_sem_tif).exists() or inst_gdf.empty:
+    if not m_sem_tif or not Path(m_sem_tif).exists():
         return {"available": False}
 
     with rasterio.open(m_sem_tif) as src:
@@ -78,8 +136,9 @@ def _semantic_instance_consistency(
         sem_mask = sem > 0
         pixel_area = abs(src.transform.a * src.transform.e)
         semantic_area = float(sem_mask.sum() * pixel_area)
+        shapes = [(geom, 1) for geom in inst_gdf.geometry] if not inst_gdf.empty else []
         inst_union = features.rasterize(
-            [(geom, 1) for geom in inst_gdf.geometry],
+            shapes,
             out_shape=sem.shape,
             transform=src.transform,
             fill=0,
@@ -89,12 +148,18 @@ def _semantic_instance_consistency(
         instance_union_area = float(inst_mask.sum() * pixel_area)
         overlap_area = float(np.logical_and(sem_mask, inst_mask).sum() * pixel_area)
 
-    coverage_ratio = instance_union_area / max(semantic_area, 1.0e-6)
-    semantic_recall = overlap_area / max(semantic_area, 1.0e-6)
-    instance_leakage = max(instance_union_area - overlap_area, 0.0) / max(instance_union_area, 1.0e-6)
-    semantic_gap = max(semantic_area - overlap_area, 0.0) / max(semantic_area, 1.0e-6)
-    union_denominator = max(semantic_area + instance_union_area - overlap_area, 1.0e-6)
-    overlap_iou = overlap_area / union_denominator
+    eps = 1.0e-6
+    semantic_empty = semantic_area <= eps
+    instance_empty = instance_union_area <= eps
+    instance_present_without_semantic = bool(semantic_empty and not instance_empty)
+
+    coverage_ratio = None if semantic_empty else float(instance_union_area / semantic_area)
+    semantic_recall = None if semantic_empty else float(overlap_area / semantic_area)
+    instance_leakage = None if instance_empty else float(max(instance_union_area - overlap_area, 0.0) / instance_union_area)
+    semantic_gap = None if semantic_empty else float(max(semantic_area - overlap_area, 0.0) / semantic_area)
+    union_denominator = semantic_area + instance_union_area - overlap_area
+    overlap_iou = None if union_denominator <= eps else float(overlap_area / union_denominator)
+
     result = {
         "available": True,
         "semantic_area": semantic_area,
@@ -105,6 +170,12 @@ def _semantic_instance_consistency(
         "instance_leakage": instance_leakage,
         "semantic_gap": semantic_gap,
         "overlap_iou": overlap_iou,
+        "semantic_instance_iou": overlap_iou,
+        "semantic_empty": bool(semantic_empty),
+        "instance_empty": bool(instance_empty),
+        "semantic_empty_flag": bool(semantic_empty),
+        "instance_empty_flag": bool(instance_empty),
+        "instance_present_without_semantic_flag": instance_present_without_semantic,
     }
     if patch_area_m2 is not None and patch_area_m2 > 0:
         semantic_cover_ratio = semantic_area / patch_area_m2
@@ -160,9 +231,13 @@ def _geometry_plausibility(
     inst_gdf: gpd.GeoDataFrame,
     *,
     patch_geometry=None,
+    patch_context: dict[str, Any] | None = None,
+    quality_cfg: dict[str, Any] | None = None,
+    reference_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if inst_gdf.empty:
         return {"available": False}
+    cfg = _resolve_quality_cfg(quality_cfg)
     areas = inst_gdf.geometry.area.astype(float).to_numpy()
     widths = np.asarray([_equivalent_crown_width(float(area)) for area in areas], dtype=float)
     union_area = float(inst_gdf.geometry.union_all().area) if len(inst_gdf) else 0.0
@@ -170,6 +245,46 @@ def _geometry_plausibility(
     sorted_areas = np.sort(areas)[::-1]
     overlap_pair_count, overlap_area_total = _overlap_pair_stats(inst_gdf)
     edge_touch_count, edge_touch_ratio = _edge_touch_stats(inst_gdf, patch_geometry)
+    expected_mean_crown_width_m, expected_width_source = _resolve_expected_crown_width(
+        widths=widths,
+        reference_metrics=reference_metrics,
+        quality_cfg=cfg,
+    )
+    expected_crown_area_m2, expected_area_source = _resolve_expected_crown_area(
+        areas=areas,
+        expected_mean_crown_width_m=expected_mean_crown_width_m,
+        quality_cfg=cfg,
+    )
+    pixel_resolution_m = _safe_float((patch_context or {}).get("pixel_resolution_m"))
+    small_fragment_beta = float(cfg.get("small_fragment_beta", 0.25))
+    tiny_width_beta = float(cfg.get("tiny_width_beta", 0.40))
+    large_width_alpha = float(cfg.get("large_width_alpha", 2.0))
+    min_width_resolution_factor = float(cfg.get("min_width_resolution_factor", 2.0))
+    dominant_share_threshold = float(cfg.get("dominant_share_threshold", 0.35))
+    min_width_by_resolution_m = None if pixel_resolution_m is None else float(pixel_resolution_m * min_width_resolution_factor)
+    small_fragment_area_threshold_m2 = (
+        None if expected_crown_area_m2 is None else float(expected_crown_area_m2 * small_fragment_beta)
+    )
+    tiny_width_threshold_m = None
+    if expected_mean_crown_width_m is not None:
+        tiny_width_threshold_m = float(expected_mean_crown_width_m * tiny_width_beta)
+    if min_width_by_resolution_m is not None:
+        tiny_width_threshold_m = max(float(tiny_width_threshold_m or 0.0), min_width_by_resolution_m)
+    large_width_threshold_m = (
+        None if expected_mean_crown_width_m is None else float(expected_mean_crown_width_m * large_width_alpha)
+    )
+    small_fragment_ratio_relative = (
+        None if small_fragment_area_threshold_m2 is None else float(np.mean(areas < small_fragment_area_threshold_m2))
+    )
+    tiny_width_ratio_relative = (
+        None if tiny_width_threshold_m is None else float(np.mean(widths < tiny_width_threshold_m))
+    )
+    width_outlier_ratio = (
+        None if large_width_threshold_m is None else float(np.mean(widths > large_width_threshold_m))
+    )
+    eps = 1.0e-6
+    max_instance_area_share = None if union_area <= eps else float(sorted_areas[0] / union_area)
+    top5_instance_area_share = None if union_area <= eps else float(np.sum(sorted_areas[:5]) / union_area)
     return {
         "available": True,
         "instance_count": int(len(inst_gdf)),
@@ -182,6 +297,8 @@ def _geometry_plausibility(
         "p90_area_m2": _safe_quantile(areas, 0.90),
         "mean_equivalent_crown_width_m": float(np.mean(widths)),
         "median_equivalent_crown_width_m": float(np.median(widths)),
+        "p10_equivalent_crown_width_m": _safe_quantile(widths, 0.10),
+        "p90_equivalent_crown_width_m": _safe_quantile(widths, 0.90),
         "small_fragment_ratio_lt_1m2": float(np.mean(areas < 1.0)),
         "small_fragment_ratio_lt_2m2": float(np.mean(areas < 2.0)),
         "small_fragment_ratio_lt_4m2": float(np.mean(areas < 4.0)),
@@ -189,8 +306,20 @@ def _geometry_plausibility(
         "tiny_width_ratio_lt_1m": float(np.mean(widths < 1.0)),
         "tiny_width_ratio_lt_2m": float(np.mean(widths < 2.0)),
         "large_width_ratio_gt_6m": float(np.mean(widths > 6.0)),
-        "max_instance_area_share": float(sorted_areas[0] / max(union_area, 1.0e-6)),
-        "top5_instance_area_share": float(np.sum(sorted_areas[:5]) / max(union_area, 1.0e-6)),
+        "small_fragment_ratio_relative": small_fragment_ratio_relative,
+        "small_fragment_area_threshold_m2": small_fragment_area_threshold_m2,
+        "tiny_width_ratio_relative": tiny_width_ratio_relative,
+        "tiny_width_threshold_m": tiny_width_threshold_m,
+        "width_outlier_ratio": width_outlier_ratio,
+        "large_width_threshold_m": large_width_threshold_m,
+        "dominant_share_threshold": dominant_share_threshold,
+        "expected_mean_crown_width_m": expected_mean_crown_width_m,
+        "expected_mean_crown_width_source": expected_width_source,
+        "expected_crown_area_m2": expected_crown_area_m2,
+        "expected_crown_area_source": expected_area_source,
+        "min_width_by_resolution_m": min_width_by_resolution_m,
+        "max_instance_area_share": max_instance_area_share,
+        "top5_instance_area_share": top5_instance_area_share,
         "overlap_pair_count": int(overlap_pair_count),
         "overlap_area_total_m2": float(overlap_area_total),
         "edge_touch_count": int(edge_touch_count),
@@ -198,14 +327,16 @@ def _geometry_plausibility(
     }
 
 
-def _height_consistency(inst_gdf: gpd.GeoDataFrame, chm_tif: str | None) -> dict[str, Any]:
+def _height_consistency(inst_gdf: gpd.GeoDataFrame, chm_tif: str | None, *, quality_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     if not chm_tif or not Path(chm_tif).exists() or inst_gdf.empty:
         return {"available": False}
 
+    cfg = _resolve_quality_cfg(quality_cfg)
+    height_support_thr_m = float(cfg.get("height_support_thr_m", 1.0))
     with rasterio.open(chm_tif) as src:
         chm = src.read(1).astype(np.float32)
         valid = np.isfinite(chm)
-        support_mask = valid & (chm > 1.0)
+        support_mask = valid & (chm > height_support_thr_m)
         pixel_area = abs(src.transform.a * src.transform.e)
         inst_union = features.rasterize(
             [(geom, 1) for geom in inst_gdf.geometry],
@@ -224,6 +355,7 @@ def _height_consistency(inst_gdf: gpd.GeoDataFrame, chm_tif: str | None) -> dict
         edge_strength = float(np.nanmean(np.sqrt(gx * gx + gy * gy)[inst_mask]))
         return {
             "available": True,
+            "height_support_thr_m": height_support_thr_m,
             "instance_height_support_ratio": support_pixels / instance_pixels,
             "height_mean": float(np.mean(height_values)),
             "height_p95": float(np.percentile(height_values, 95)),
@@ -239,6 +371,8 @@ def build_output_diagnostics(
     m_sem_tif: str | None = None,
     chm_tif: str | None = None,
     patch_raster: str | None = None,
+    quality_cfg: dict[str, Any] | None = None,
+    reference_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     inst_gdf, instance_stats = _load_instances_with_stats(inst_shp)
     patch_context = _resolve_patch_context(patch_raster=patch_raster, fallback_raster=m_sem_tif)
@@ -250,10 +384,13 @@ def build_output_diagnostics(
             m_sem_tif,
             patch_area_m2=patch_context.get("patch_area_m2"),
         ),
-        "height_consistency": _height_consistency(inst_gdf, chm_tif),
+        "height_consistency": _height_consistency(inst_gdf, chm_tif, quality_cfg=quality_cfg),
         "geometry_plausibility": _geometry_plausibility(
             inst_gdf,
             patch_geometry=patch_context.get("patch_geometry"),
+            patch_context=patch_context,
+            quality_cfg=quality_cfg,
+            reference_metrics=reference_metrics,
         ),
     }
 

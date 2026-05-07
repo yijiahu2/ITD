@@ -66,12 +66,12 @@ def _compact_template_cfg(template_cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _compact_top_problem_cases(details_summary: dict[str, Any]) -> list[dict[str, Any]]:
-    cases = details_summary.get("top_k_xiaoban") or []
+    cases = details_summary.get("top_k_reference_units") or []
     compacted: list[dict[str, Any]] = []
     for case in cases[:5]:
         compacted.append(
             {
-                "xiaoban_id": case.get("xiaoban_id"),
+                "reference_unit_id": case.get("reference_unit_id"),
                 "error_score": case.get("error_score"),
                 "tree_count_error_abs": case.get("tree_count_error_abs"),
                 "mean_crown_width_error_abs": case.get("mean_crown_width_error_abs"),
@@ -124,7 +124,7 @@ def _compact_recent_failed_cases(rows: Any, *, limit: int = 3) -> list[dict[str,
                 "sample_id": item.get("sample_id"),
                 "failure_category": item.get("failure_category"),
                 "target_model_role": item.get("target_model_role"),
-                "xiaoban_id": ((item.get("metadata") or {}).get("xiaoban_id")),
+                "reference_unit_id": ((item.get("metadata") or {}).get("reference_unit_id")),
             }
         )
     return compacted
@@ -173,7 +173,7 @@ def _compact_scheduler_context(scheduler_context: dict[str, Any]) -> dict[str, A
             "improvement": roi_assessment.get("improvement"),
             "trigger_metrics": _take_list(roi_assessment.get("trigger_metrics"), 5),
             "candidate_roi_ids": [
-                item.get("candidate_id") or item.get("xiaoban_id")
+                item.get("candidate_id") or item.get("reference_unit_id")
                 for item in _take_list(roi_assessment.get("candidate_rois"), 5)
                 if isinstance(item, dict)
             ],
@@ -241,7 +241,7 @@ def _compact_roi_assessment(roi_assessment: dict[str, Any]) -> dict[str, Any]:
         "trigger_metrics": _take_list(roi_assessment.get("trigger_metrics"), 5),
         "candidate_rois": [
             {
-                "candidate_id": item.get("candidate_id") or item.get("xiaoban_id"),
+                "candidate_id": item.get("candidate_id") or item.get("reference_unit_id"),
                 "score": item.get("score"),
                 "priority_score": item.get("priority_score"),
                 "terrain_score_mean": item.get("terrain_score_mean"),
@@ -267,7 +267,7 @@ def _compact_candidate_rois(candidate_rois: list[dict[str, Any]]) -> list[dict[s
         compacted.append(
             {
                 "candidate_id": item.get("candidate_id"),
-                "xiaoban_id": item.get("xiaoban_id"),
+                "reference_unit_id": item.get("reference_unit_id"),
                 "score": item.get("score"),
                 "priority_score": item.get("priority_score"),
                 "problem_type": item.get("problem_type"),

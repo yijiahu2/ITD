@@ -42,3 +42,4 @@ def get_prompt_contract(name: str) -> dict[str, Any]:
 
 def list_prompt_contracts() -> dict[str, dict[str, Any]]:
     return deepcopy(_PROMPT_CONTRACTS)
+

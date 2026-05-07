@@ -39,6 +39,9 @@ def test_reference_score_breakdown_prioritizes_crown_when_count_is_stable() -> N
 
     assert breakdown["weights"]["mean_crown_width_error_ratio"] > breakdown["weights"]["tree_count_error_ratio"]
     assert breakdown["normalized_metrics"]["density_error_ratio"] == 0.1
+    assert breakdown["metric_groups"]["inventory_count_alignment"]["metrics"][0]["metric"] == "tree_count_error_ratio"
+    assert breakdown["metric_groups"]["crown_boundary_alignment"]["metrics"][0]["metric"] == "mean_crown_width_error_ratio"
+    assert breakdown["weighted_terms"]["mean_crown_width_error_ratio"]["contribution"] > breakdown["weighted_terms"]["tree_count_error_ratio"]["contribution"]
 
 
 def test_build_roi_assessment_uses_auto_thresholds_when_config_uses_zero(tmp_path) -> None:
@@ -81,6 +84,7 @@ def test_build_roi_assessment_uses_auto_thresholds_when_config_uses_zero(tmp_pat
     assert "mean_crown_width_error_ratio" in assessment["trigger_metrics"]
     assert "tree_count_error_ratio" not in assessment["trigger_metrics"]
     assert assessment["metric_thresholds"]["tree_count_error_ratio"] > assessment["metric_thresholds"]["mean_crown_width_error_ratio"]
+    assert assessment["trigger_details"]["mean_crown_width_error_ratio"]["category"] == "crown_boundary_alignment"
 
 
 def test_detail_ranker_keeps_boundary_heavy_case_at_top(tmp_path) -> None:
@@ -94,4 +98,4 @@ def test_detail_ranker_keeps_boundary_heavy_case_at_top(tmp_path) -> None:
 
     summary = summarize_details_csv(str(details_csv), top_k=1)
 
-    assert summary["top_k_xiaoban"][0]["xiaoban_id"] == "boundary_case"
+    assert summary["top_k_reference_units"][0]["reference_unit_id"] == "boundary_case"

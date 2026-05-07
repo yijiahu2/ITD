@@ -25,16 +25,18 @@ def _build_benchmark_lines(result: dict[str, Any]) -> list[str]:
         "",
         "| 指标 | 数值 |",
         "|---|---:|",
-        f"| Precision (IoU=0.50) | {_fmt(result.get('precision50_percent'))}% |",
-        f"| Recall (IoU=0.50) | {_fmt(result.get('recall50_percent'))}% |",
+        f"| Precision (IoU=0.50) | {_fmt((result.get('precision') or 0.0) * 100.0)}% |",
+        f"| Recall (IoU=0.50) | {_fmt((result.get('recall') or 0.0) * 100.0)}% |",
         f"| AP50 | {_fmt(result.get('ap50'))} |",
         f"| AP75 | {_fmt(result.get('ap75'))} |",
+        f"| F1@0.50 | {_fmt(result.get('f1_score50'))} |",
+        f"| 平均匹配 IoU | {_fmt(result.get('mean_iou_matched'))} |",
         f"| MAE（匹配树冠面积, IoU=0.50） | {_fmt(result.get('mae'))} |",
         f"| RMSE（匹配树冠面积, IoU=0.50） | {_fmt(result.get('rmse'))} |",
         f"| RMSE%（匹配树冠面积, IoU=0.50） | {_fmt(result.get('rmse_percent'))}% |",
         f"| R2（匹配树冠面积, IoU=0.50） | {_fmt(result.get('r2'))} |",
-        f"| Precision (IoU=0.75) | {_fmt(result.get('precision75_percent'))}% |",
-        f"| Recall (IoU=0.75) | {_fmt(result.get('recall75_percent'))}% |",
+        f"| Precision (IoU=0.75) | {_fmt(((result.get('iou_0_75') or {}).get('precision') or 0.0) * 100.0)}% |",
+        f"| Recall (IoU=0.75) | {_fmt(((result.get('iou_0_75') or {}).get('recall') or 0.0) * 100.0)}% |",
         "",
         "## 评估说明",
         "",
@@ -45,6 +47,32 @@ def _build_benchmark_lines(result: dict[str, Any]) -> list[str]:
         f"- 真值文件: `{result.get('ground_truth_file')}`",
         f"- IoU=0.50 匹配树冠数量: `{crown_area.get('num_matched_crowns')}`",
     ]
+    return lines
+
+
+def _build_decision_flag_lines(result: dict[str, Any]) -> list[str]:
+    flags = result.get("decision_flags") or {}
+    if not flags:
+        return []
+    rows = [
+        ("overall_score", flags.get("overall_score")),
+        ("quality_pass_flag", flags.get("quality_pass_flag")),
+        ("need_local_refine_flag", flags.get("need_local_refine_flag")),
+        ("need_param_search_flag", flags.get("need_param_search_flag")),
+        ("need_finetune_flag", flags.get("need_finetune_flag")),
+        ("need_manual_review_flag", flags.get("need_manual_review_flag")),
+        ("accepted_improvement_flag", flags.get("accepted_improvement_flag")),
+        ("regression_flag", flags.get("regression_flag")),
+    ]
+    lines = [
+        "",
+        "## 决策 Flags",
+        "",
+        "| 指标 | 数值 |",
+        "|---|---:|",
+    ]
+    for name, value in rows:
+        lines.append(f"| {name} | {_fmt(value)} |")
     return lines
 
 
@@ -86,7 +114,8 @@ def _build_inventory_lines(result: dict[str, Any]) -> list[str]:
 
 
 def _build_area_consistency_lines(result: dict[str, Any]) -> list[str]:
-    area = result.get("area_consistency") or {}
+    online_metrics = ((result.get("online_quality") or {}).get("metrics") or {})
+    area = online_metrics.get("semantic_instance_consistency") or {}
     if not area.get("available"):
         return []
     rows = [
@@ -115,22 +144,28 @@ def _build_area_consistency_lines(result: dict[str, Any]) -> list[str]:
 
 
 def _build_geometry_diagnostics_lines(result: dict[str, Any]) -> list[str]:
-    geometry = result.get("geometry_diagnostics") or {}
-    if not geometry.get("available"):
+    online_metrics = ((result.get("online_quality") or {}).get("metrics") or {})
+    geometry = online_metrics.get("geometry_plausibility") or {}
+    geometry_diag = online_metrics.get("geometry_diagnostics") or {}
+    if not geometry.get("available") and not geometry_diag:
         return []
     rows = [
-        ("实例数", geometry.get("instance_count"), 0),
+        ("预测实例数", geometry_diag.get("pred_instance_count", geometry.get("instance_count")), 0),
+        ("空输出标记", geometry_diag.get("empty_output_flag"), 0),
+        ("预测覆盖率", geometry_diag.get("pred_cover_ratio"), 4),
+        ("几何有效比例", geometry_diag.get("valid_instance_ratio"), 4),
+        ("形状异常比例", geometry_diag.get("shape_anomaly_ratio"), 4),
+        ("小碎片比例", geometry_diag.get("small_fragment_ratio"), 4),
+        ("大斑块比例", geometry_diag.get("large_blob_ratio"), 4),
+        ("重复重叠比例", geometry_diag.get("duplicate_overlap_ratio"), 4),
+        ("边缘伪影分数", geometry_diag.get("edge_artifact_score"), 4),
+        ("碎片化分数", geometry_diag.get("fragmentation_score"), 4),
+        ("粘连分数", geometry_diag.get("merge_blob_score"), 4),
+        ("语义冲突标记", geometry_diag.get("semantic_instance_conflict_flag"), 0),
         ("union树冠面积(m²)", geometry.get("union_area_m2"), 4),
         ("面积和/union比", geometry.get("sum_to_union_ratio"), 4),
         ("平均面积(m²)", geometry.get("mean_area_m2"), 4),
-        ("面积中位数(m²)", geometry.get("median_area_m2"), 4),
         ("平均等效冠幅(m)", geometry.get("mean_equivalent_crown_width_m"), 4),
-        ("碎片率(<4m²)", geometry.get("small_fragment_ratio_lt_4m2"), 4),
-        ("碎片率(<6m²)", geometry.get("small_fragment_ratio_lt_6m2"), 4),
-        ("最大单块占比", geometry.get("max_instance_area_share"), 4),
-        ("前5大单块占比", geometry.get("top5_instance_area_share"), 4),
-        ("边界接触率", geometry.get("edge_touch_ratio"), 4),
-        ("几何重叠对数", geometry.get("overlap_pair_count"), 0),
     ]
     lines = [
         "",
@@ -141,6 +176,71 @@ def _build_geometry_diagnostics_lines(result: dict[str, Any]) -> list[str]:
     ]
     for name, value, digits in rows:
         lines.append(f"| {name} | {_fmt(value, digits=digits)} |")
+    return lines
+
+
+def _build_error_decomposition_lines(result: dict[str, Any]) -> list[str]:
+    error_decomposition = result.get("error_decomposition") or {}
+    if not error_decomposition:
+        return []
+    rows = [
+        ("under_segmentation_score", error_decomposition.get("under_segmentation_score")),
+        ("over_segmentation_score", error_decomposition.get("over_segmentation_score")),
+        ("miss_detection_score", error_decomposition.get("miss_detection_score")),
+        ("false_detection_score", error_decomposition.get("false_detection_score")),
+        ("failure_confidence", error_decomposition.get("failure_confidence")),
+    ]
+    lines = [
+        "",
+        "## 错误分解",
+        "",
+        "| 指标 | 数值 |",
+        "|---|---:|",
+    ]
+    for name, value in rows:
+        lines.append(f"| {name} | {_fmt(value)} |")
+    return lines
+
+
+def _build_profile_lines(payload: dict[str, Any]) -> list[str]:
+    profile = payload.get("mainline_profile")
+    if not profile:
+        return []
+    capabilities = payload.get("mainline_capabilities") or {}
+    modalities = payload.get("input_modalities") or {}
+    return [
+        "## 主线 Profile",
+        "",
+        f"- `mainline_profile`: `{profile}`",
+        f"- 输入模态: `{json.dumps(modalities, ensure_ascii=False, sort_keys=True)}`",
+        f"- 可用证据: `{json.dumps(capabilities, ensure_ascii=False, sort_keys=True)}`",
+        "",
+    ]
+
+
+def _build_height_structure_lines(payload: dict[str, Any]) -> list[str]:
+    height_summary = payload.get("height_structure_summary") or {}
+    if not height_summary.get("available"):
+        return []
+    rows = [
+        ("实例数", height_summary.get("instance_count"), 0),
+        ("已赋高实例数", height_summary.get("height_attributed_count"), 0),
+        ("P95树高均值(m)", height_summary.get("tree_height_p95_mean"), 4),
+        ("P95树高最大值(m)", height_summary.get("tree_height_p95_max"), 4),
+    ]
+    lines = [
+        "",
+        "## B线高度与结构输出",
+        "",
+        "| 指标 | 数值 |",
+        "|---|---:|",
+    ]
+    for name, value, digits in rows:
+        lines.append(f"| {name} | {_fmt(value, digits=digits)} |")
+    if height_summary.get("structure_tag_counts"):
+        lines.extend(["", f"- 结构标签统计: `{json.dumps(height_summary.get('structure_tag_counts'), ensure_ascii=False, sort_keys=True)}`"])
+    if payload.get("tree_crowns_height_structure_gpkg"):
+        lines.append(f"- 高度结构树冠文件: `{payload.get('tree_crowns_height_structure_gpkg')}`")
     return lines
 
 
@@ -160,8 +260,20 @@ def _build_report_payload(
     result = summary.get("final_evaluation")
     if not isinstance(result, dict) or not result:
         result = evaluate_final_result(summary, runtime_cfg=runtime_cfg)
+    input_manifest = summary.get("input_manifest") or (runtime_cfg or {}).get("_input_manifest") or {}
+    input_metadata = input_manifest.get("metadata") or {}
+    final_outputs = summary.get("final_outputs") or {}
+    final_metadata = final_outputs.get("metadata") or {}
+    mainline_profile = (
+        final_metadata.get("mainline_profile")
+        or (runtime_cfg or {}).get("mainline_profile")
+        or input_metadata.get("mainline_profile")
+    )
     return {
         "run_name": summary.get("run_name") or summary.get("mode"),
+        "mainline_profile": mainline_profile,
+        "mainline_capabilities": final_metadata.get("mainline_capabilities") or (runtime_cfg or {}).get("_mainline_capabilities") or input_metadata.get("mainline_capabilities") or {},
+        "input_modalities": input_metadata.get("input_modalities") or {},
         "tree_crowns_shp": (
             summary.get("tree_crowns_shp")
             or summary.get("merged_inst_shp")
@@ -169,6 +281,9 @@ def _build_report_payload(
             or (summary.get("segmentation_model") or {}).get("y_inst_shp")
         ),
         "tree_points_shp": summary.get("tree_points_shp") or (summary.get("segmentation_model") or {}).get("tree_points_shp"),
+        "tree_crowns_height_structure_gpkg": final_outputs.get("tree_crowns_height_structure_gpkg"),
+        "height_structure_summary_json": final_outputs.get("height_structure_summary_json"),
+        "height_structure_summary": final_metadata.get("height_structure_summary") or {},
         "segmentation_visualization_png": (
             summary.get("segmentation_visualization_png")
             or summary.get("tree_crowns_preview_png")
@@ -192,20 +307,27 @@ def build_experiment_report(
     summary["final_evaluation"] = result
 
     lines = [f"# 最终评估报告：{payload.get('run_name')}", ""]
+    lines.extend(_build_profile_lines(payload))
     mode = result.get("evaluation_mode")
     if mode == "benchmark":
         lines.extend(_build_benchmark_lines(result))
+        lines.extend(_build_error_decomposition_lines(result))
+        lines.extend(_build_decision_flag_lines(result))
     elif mode in {"inventory_consistency", "reference_quality"}:
         lines.extend(_build_inventory_lines(result))
         lines.extend(_build_area_consistency_lines(result))
         lines.extend(_build_geometry_diagnostics_lines(result))
+        lines.extend(_build_decision_flag_lines(result))
     else:
         lines.extend(_build_unavailable_lines(result))
+    lines.extend(_build_height_structure_lines(payload))
 
     lines.extend(["", "## 最终交付物", ""])
     for label, path in [
         ("树冠掩码 SHP", payload.get("tree_crowns_shp")),
         ("树木定位点 SHP", payload.get("tree_points_shp")),
+        ("B线高度结构 GPKG", payload.get("tree_crowns_height_structure_gpkg")),
+        ("B线高度结构摘要 JSON", payload.get("height_structure_summary_json")),
         ("融合可视化 PNG", payload.get("segmentation_visualization_png")),
     ]:
         if path:

@@ -181,6 +181,15 @@ def _default_weight_decay(spec: MMDetAlgorithmSpec) -> float:
     return 1.0e-4
 
 
+def _grad_accum_steps(cfg: dict[str, Any]) -> int:
+    raw = cfg.get("segmentation_train_grad_accum_steps", 1)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, value)
+
+
 def _wrap_train_dataset_cfg(base_cfg: dict[str, Any], injection_manifest: dict[str, Any]) -> dict[str, Any]:
     wrapper = dict(injection_manifest.get("dataset_wrapper") or {})
     wrapper_type = str(wrapper.get("type") or "").strip()
@@ -238,7 +247,7 @@ def _mask2former_instance_pipelines() -> tuple[str, str]:
         crop_type='absolute',
         recompute_bbox=True,
         allow_negative_crop=True),
-    dict(type='FilterAnnotations', min_gt_bbox_wh=(1.0, 1.0), by_mask=True),
+    dict(type='FilterAnnotations', min_gt_bbox_wh=(1e-5, 1e-5), by_mask=True),
     dict(type='PackDetInputs'),
 ]""",
         """[
@@ -259,9 +268,28 @@ def _pipeline_strings(spec: MMDetAlgorithmSpec) -> tuple[str, str]:
     return _generic_instance_pipelines()
 
 
-def _model_update_code(spec: MMDetAlgorithmSpec, num_classes: int) -> str:
+def _model_update_code(
+    spec: MMDetAlgorithmSpec,
+    num_classes: int,
+    *,
+    mask2former_num_points: int | None = None,
+    mask2former_oversample_ratio: float | None = None,
+    mask2former_importance_sample_ratio: float | None = None,
+) -> str:
     if spec.config_style == "mask2former_instance":
         class_weight = [1.0] * num_classes + [0.1]
+        train_cfg_lines: list[str] = []
+        if mask2former_num_points is not None:
+            train_cfg_lines.append(f"model['train_cfg']['num_points'] = {mask2former_num_points}")
+        if mask2former_oversample_ratio is not None:
+            train_cfg_lines.append(f"model['train_cfg']['oversample_ratio'] = {mask2former_oversample_ratio}")
+        if mask2former_importance_sample_ratio is not None:
+            train_cfg_lines.append(
+                f"model['train_cfg']['importance_sample_ratio'] = {mask2former_importance_sample_ratio}"
+            )
+        train_cfg_update = "\n".join(train_cfg_lines)
+        if train_cfg_update:
+            train_cfg_update = f"\n{train_cfg_update}\n"
         return f"""model = _base_.model
 
 model['panoptic_head']['num_things_classes'] = {num_classes}
@@ -269,6 +297,7 @@ model['panoptic_head']['num_stuff_classes'] = 0
 model['panoptic_head']['loss_cls']['class_weight'] = {_literal(class_weight)}
 model['panoptic_fusion_head']['num_things_classes'] = {num_classes}
 model['panoptic_fusion_head']['num_stuff_classes'] = 0
+{train_cfg_update}
 
 del _base_.model
 """
@@ -308,6 +337,7 @@ def _training_blocks(
     weight_decay: float,
     val_interval: int,
     use_amp: bool,
+    grad_accum_steps: int,
 ) -> tuple[str, str, str]:
     if spec.train_loop_style == "iter_adamw":
         iters_per_epoch = max(1, math.ceil(num_train_images / max(batch_size, 1)))
@@ -327,9 +357,10 @@ def _training_blocks(
 )"""
         wrapper_type = "AmpOptimWrapper" if use_amp else "OptimWrapper"
         loss_scale_line = "    loss_scale='dynamic',\n" if use_amp else ""
+        accum_line = f"    accumulative_counts={grad_accum_steps},\n" if grad_accum_steps > 1 else ""
         optimizer = f"""dict(
     type='{wrapper_type}',
-{loss_scale_line}    optimizer=dict(
+{loss_scale_line}{accum_line}    optimizer=dict(
         _delete_=True,
         type='AdamW',
         lr={lr},
@@ -366,9 +397,10 @@ test_cfg = dict(type='TestLoop')"""
 ]"""
         wrapper_type = "AmpOptimWrapper" if use_amp else "OptimWrapper"
         loss_scale_line = "    loss_scale='dynamic',\n" if use_amp else ""
+        accum_line = f"    accumulative_counts={grad_accum_steps},\n" if grad_accum_steps > 1 else ""
         optimizer = f"""dict(
     type='{wrapper_type}',
-{loss_scale_line}    optimizer=dict(
+{loss_scale_line}{accum_line}    optimizer=dict(
         _delete_=True,
         type='AdamW',
         lr={lr},
@@ -401,9 +433,10 @@ test_cfg = dict(type='TestLoop')"""
 ]"""
     wrapper_type = "AmpOptimWrapper" if use_amp else "OptimWrapper"
     loss_scale_line = "    loss_scale='dynamic',\n" if use_amp else ""
+    accum_line = f"    accumulative_counts={grad_accum_steps},\n" if grad_accum_steps > 1 else ""
     optimizer = f"""dict(
     type='{wrapper_type}',
-{loss_scale_line}    optimizer=dict(type='SGD', lr={lr}, momentum=0.9, weight_decay={weight_decay}),
+{loss_scale_line}{accum_line}    optimizer=dict(type='SGD', lr={lr}, momentum=0.9, weight_decay={weight_decay}),
 )"""
     train_cfg = f"""train_cfg = dict(type='EpochBasedTrainLoop', max_epochs={max_epochs}, val_interval={val_interval})
 val_cfg = dict(type='ValLoop')
@@ -432,12 +465,22 @@ def _write_generated_config(
     seed: int,
     val_interval: int,
     use_amp: bool,
+    grad_accum_steps: int,
+    mask2former_num_points: int | None,
+    mask2former_oversample_ratio: float | None,
+    mask2former_importance_sample_ratio: float | None,
     pin_memory: bool,
     prefetch_factor: int | None,
     injection_manifest: dict[str, Any],
 ) -> None:
     train_pipeline, test_pipeline = _pipeline_strings(spec)
-    model_update = _model_update_code(spec, num_classes)
+    model_update = _model_update_code(
+        spec,
+        num_classes,
+        mask2former_num_points=mask2former_num_points,
+        mask2former_oversample_ratio=mask2former_oversample_ratio,
+        mask2former_importance_sample_ratio=mask2former_importance_sample_ratio,
+    )
     param_scheduler, optim_wrapper, loop_cfg = _training_blocks(
         spec=spec,
         num_train_images=num_train_images,
@@ -448,6 +491,7 @@ def _write_generated_config(
         weight_decay=weight_decay,
         val_interval=val_interval,
         use_amp=use_amp,
+        grad_accum_steps=grad_accum_steps,
     )
     prefetch_line = f"    prefetch_factor={prefetch_factor},\n" if prefetch_factor and num_workers > 0 else ""
     checkpoint_by_epoch = spec.train_loop_style != "iter_adamw"
@@ -655,8 +699,21 @@ def main() -> None:
     weight_decay = float(cfg.get("segmentation_train_weight_decay", _default_weight_decay(algorithm_spec)))
     seed = int(cfg.get("segmentation_train_seed", 42))
     val_interval = int(cfg.get("segmentation_train_val_interval", 1))
+    grad_accum_steps = _grad_accum_steps(cfg)
     amp_default = algorithm_spec.train_loop_style != "iter_adamw"
     use_amp = to_bool(cfg.get("segmentation_train_amp"), default=amp_default)
+    mask2former_num_points = cfg.get("segmentation_train_mask2former_num_points")
+    mask2former_oversample_ratio = cfg.get("segmentation_train_mask2former_oversample_ratio")
+    mask2former_importance_sample_ratio = cfg.get("segmentation_train_mask2former_importance_sample_ratio")
+    mask2former_num_points = int(mask2former_num_points) if mask2former_num_points not in {None, ""} else None
+    mask2former_oversample_ratio = (
+        float(mask2former_oversample_ratio) if mask2former_oversample_ratio not in {None, ""} else None
+    )
+    mask2former_importance_sample_ratio = (
+        float(mask2former_importance_sample_ratio)
+        if mask2former_importance_sample_ratio not in {None, ""}
+        else None
+    )
     pin_memory = to_bool(cfg.get("segmentation_train_pin_memory"), default=True)
     prefetch_factor_raw = cfg.get("segmentation_train_prefetch_factor")
     prefetch_factor = int(prefetch_factor_raw) if prefetch_factor_raw not in {None, ""} else 4
@@ -685,6 +742,10 @@ def main() -> None:
         seed=seed,
         val_interval=val_interval,
         use_amp=use_amp,
+        grad_accum_steps=grad_accum_steps,
+        mask2former_num_points=mask2former_num_points,
+        mask2former_oversample_ratio=mask2former_oversample_ratio,
+        mask2former_importance_sample_ratio=mask2former_importance_sample_ratio,
         pin_memory=pin_memory,
         prefetch_factor=prefetch_factor,
         injection_manifest=injection_manifest,
@@ -710,6 +771,11 @@ def main() -> None:
         "train_epochs": max_epochs,
         "train_lr": lr,
         "train_weight_decay": weight_decay,
+        "train_grad_accum_steps": grad_accum_steps,
+        "train_effective_batch_size": batch_size * grad_accum_steps,
+        "train_mask2former_num_points": mask2former_num_points,
+        "train_mask2former_oversample_ratio": mask2former_oversample_ratio,
+        "train_mask2former_importance_sample_ratio": mask2former_importance_sample_ratio,
         "train_seed": seed,
         "train_amp": use_amp,
         "train_pin_memory": pin_memory,
@@ -731,13 +797,17 @@ def main() -> None:
     if not train_py.exists():
         raise FileNotFoundError(f"未找到 MMDetection train.py: {train_py}")
 
+    resume_requested = to_bool(cfg.get("segmentation_train_resume"), default=False)
+    resume_available = (work_dir / "last_checkpoint").exists()
+    resume_arg = " --resume" if resume_requested and resume_available else ""
+
     bash_cmd = (
         f"source {env_cfg['conda_sh']} && "
         f"conda activate {env_cfg['conda_env']} && "
         f"export PYTHONNOUSERSITE=1 && "
         f"export PYTHONUNBUFFERED=1 && "
         f"export PYTHONPATH={repo_root}:{PROJECT_ROOT}:${{PYTHONPATH:-}} && "
-        f"python -u {train_py} {generated_config} --work-dir {work_dir}"
+        f"python -u {train_py} {generated_config} --work-dir {work_dir}{resume_arg}"
     )
     print("[RUN segmentation mmdet trainer]", flush=True)
     print(bash_cmd, flush=True)

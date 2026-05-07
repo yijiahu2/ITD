@@ -51,7 +51,7 @@
 
 ### inventory_consistency
 
-当缺少可用真值时，最终报告自动退回 `inventory_consistency` 模式，输出融合后结果与样地/小班约束的一致性指标。
+当缺少可用真值时，最终报告自动退回 `inventory_consistency` 模式，输出融合后结果与参考样地/调查矢量约束的一致性指标。
 
 ## Cleanup Policy
 

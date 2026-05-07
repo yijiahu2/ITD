@@ -78,12 +78,16 @@ def test_build_online_scene_state_with_chm_and_public_dataset(tmp_path: Path) ->
             }
         ],
         "dem_profiles": [{"resolution_x_m": 12.5}],
-        "public_dataset_profiles": [
-            {
-                "forest_types": ["subtropical_evergreen_broadleaf_forest"],
-                "target_expert_families": ["boundary_calibration"],
+        "metadata": {
+            "input_manifest_summary": {
+                "public_datasets": [
+                    {
+                        "forest_types": ["subtropical_evergreen_broadleaf_forest"],
+                        "target_expert_families": ["boundary_calibration"],
+                    }
+                ]
             }
-        ],
+        },
     }
     terrain_info = {
         "global_terrain_background": {"landform_type": "hill_low"},

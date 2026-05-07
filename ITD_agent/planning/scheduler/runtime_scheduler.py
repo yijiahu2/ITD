@@ -292,7 +292,7 @@ def _build_child_model_routing_context(scheduler_context: dict[str, Any]) -> dic
     terrain_analysis = scheduler_context.get("terrain_analysis") or {}
     roi_assessment = scheduler_context.get("roi_assessment") or {}
     details_summary = (roi_assessment.get("details_summary") or scheduler_context.get("details_summary") or {})
-    top_cases = details_summary.get("top_k_xiaoban") or []
+    top_cases = details_summary.get("top_k_reference_units") or details_summary.get("top_k_xiaoban") or []
     metrics = scheduler_context.get("evaluation_metrics") or {}
     failure_categories = [
         infer_failure_category(case)

@@ -6,15 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from ITD_agent.config_adapter import load_raw_yaml, load_runtime_config, save_runtime_config
-from ITD_agent.data_processing.fusion_postprocess import fuse_instance_layers
+from ITD_agent.data_processing.fusion import rasterize_instances_to_label_raster
+from ITD_agent.data_processing.fusion.postprocess import fuse_instance_layers
 from ITD_agent.data_processing.processor import summarize_data_processing_stage
+from ITD_agent.data_processing.roi import extract_signal_driven_roi_candidates
 from ITD_agent.evaluation_analysis.evaluator import (
     evaluate_expert_model_phase,
-    evaluate_input_phase,
     evaluate_main_model_phase,
     evaluate_roi_phase,
 )
-from ITD_agent.evaluation_analysis.finetune_effect_assessment import build_finetune_recommendation as build_finetune_recommendation_impl
+from ITD_agent.finetune_pool.recommendation import build_finetune_recommendation as build_finetune_recommendation_impl
 from ITD_agent.evaluation_analysis.reference_quality_engine import score_reference_metrics
 from ITD_agent.orchestration.expert_model_loop import build_expert_model_loop_trace, save_expert_model_loop_trace
 from ITD_agent.orchestration.grouped_inference import run_grouped_experiment
@@ -61,6 +62,17 @@ def _get_roi_refine_block(cfg: dict[str, Any]) -> dict[str, Any]:
     return {"enabled": False}
 
 
+def _build_input_assessment_compat(input_manifest: dict[str, Any]) -> dict[str, Any]:
+    modalities = ((input_manifest.get("metadata") or {}).get("input_modalities") or {})
+    return {
+        "readiness_score": 1.0 if modalities.get("image") else 0.9,
+        "modality_status": dict(modalities),
+        "strengths": [],
+        "issues": [] if modalities.get("image") else ["缺少遥感影像输入。"],
+        "recommended_actions": [],
+    }
+
+
 def _get_template_path(cfg: dict[str, Any], config_path: str) -> str:
     planning_cfg = _get_planning_block(cfg)
     template_cfg = planning_cfg.get("config_templates") or {}
@@ -92,18 +104,64 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _reference_vector_path(cfg: dict[str, Any]) -> str | None:
+    return (
+        cfg.get("reference_vector_path")
+        or cfg.get("inventory_vector_path")
+        or cfg.get("xiaoban_shp")
+    )
+
+
 def _postprocess_instance_output(cfg: dict[str, Any], inst_shp: str, phase_tag: str) -> str:
     source_path = Path(inst_shp)
     postprocessed_path = source_path.with_name(f"{source_path.stem}_{phase_tag}_postprocessed{source_path.suffix}")
     result = fuse_instance_layers(
         instance_paths=[inst_shp],
         output_path=postprocessed_path,
-        boundary_vector_path=cfg.get("xiaoban_shp"),
+        boundary_vector_path=_reference_vector_path(cfg),
         overlap_ratio_thr=0.5,
         boundary_band_m=1.5,
         min_area_m2=6.0,
     )
     return str(result.get("merged_instance_path") or inst_shp)
+
+
+def _build_roi_candidate_context(
+    *,
+    cfg: dict[str, Any],
+    y_inst_tif: str | None,
+    m_sem_tif: str | None,
+    terrain_info: dict[str, Any] | None,
+    top_k: int,
+    round_idx: int,
+    inst_shp: str | None = None,
+) -> dict[str, Any]:
+    roi_cfg = _get_roi_refine_block(cfg)
+    enabled = roi_cfg.get("enabled", True)
+    if isinstance(enabled, str):
+        enabled = enabled.lower() in {"1", "true", "yes", "y", "on"}
+    resolved_y_inst_tif = y_inst_tif
+    if not resolved_y_inst_tif and inst_shp and cfg.get("input_image"):
+        resolved_y_inst_tif = rasterize_instances_to_label_raster(
+            inst_shp=inst_shp,
+            reference_raster=str(cfg["input_image"]),
+            output_tif=str(Path(cfg["output_dir"]) / "data_processing" / "roi_signal_candidates" / f"round_{int(round_idx):02d}_Y_inst_labels.tif"),
+        )
+    if not enabled or not resolved_y_inst_tif:
+        return {"candidate_rois": None, "signal_roi_summary": {}}
+
+    signal_roi_summary = extract_signal_driven_roi_candidates(
+        base_cfg=cfg,
+        y_inst_tif=resolved_y_inst_tif,
+        m_sem_tif=m_sem_tif,
+        terrain_info=terrain_info or {},
+        top_k=max(int(top_k) * 2, int(top_k)),
+        round_idx=round_idx,
+    )
+    return {
+        "candidate_rois": list(signal_roi_summary.get("selected_candidates") or []),
+        "signal_roi_summary": signal_roi_summary,
+    }
 
 
 def _metric_delta(previous_metrics: dict[str, Any], candidate_metrics: dict[str, Any], key: str) -> float | None:
@@ -226,12 +284,7 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
         terrain_info=terrain_info,
     )
     data_processing_summary_dict = data_processing_summary.to_dict()
-    input_assessment = evaluate_input_phase(
-        cfg,
-        input_manifest=input_manifest_dict,
-        terrain_info=terrain_info,
-        data_processing_summary=data_processing_summary_dict,
-    )
+    input_assessment = _build_input_assessment_compat(input_manifest_dict)
 
     main_plan = generate_main_model_plan(
         cfg=cfg,
@@ -280,6 +333,15 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
         main_model_loop_trace,
         output_dir / "planning_scheduler" / "main_model_loop_trace.json",
     )
+    main_roi_candidate_context = _build_roi_candidate_context(
+        cfg=effective_main_cfg,
+        y_inst_tif=main_model_info.get("y_inst_tif"),
+        m_sem_tif=semantic_prior_info.get("m_sem_tif"),
+        terrain_info=terrain_info,
+        top_k=int(_get_roi_refine_block(effective_main_cfg).get("top_k", 3)),
+        round_idx=0,
+        inst_shp=main_model_info.get("y_inst_shp"),
+    )
     main_roi_assessment = evaluate_roi_phase(
         effective_main_cfg,
         metrics=main_eval_info["metrics"],
@@ -288,6 +350,8 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
         y_inst_tif=main_model_info.get("y_inst_tif"),
         m_sem_tif=semantic_prior_info.get("m_sem_tif"),
         terrain_info=terrain_info,
+        candidate_rois=main_roi_candidate_context.get("candidate_rois"),
+        signal_roi_summary=main_roi_candidate_context.get("signal_roi_summary"),
     )
     roi_decision = main_roi_assessment.get("decision") or {
         "continue_refinement": bool(main_roi_assessment.get("continue_refinement")),
@@ -407,6 +471,15 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
                 previous_score=best_score_before_round,
                 candidate_score=candidate_score,
             )
+        round_candidate_context = _build_roi_candidate_context(
+            cfg=expert_cfg,
+            y_inst_tif=refine_summary.get("merged_tif") or refine_summary.get("y_inst_tif"),
+            m_sem_tif=semantic_prior_info.get("m_sem_tif"),
+            terrain_info=terrain_info,
+            top_k=int(expert_roi_plan.get("top_k", 3)),
+            round_idx=round_idx,
+            inst_shp=candidate_inst_shp,
+        )
         roi_round_decision = evaluate_roi_phase(
             expert_cfg,
             metrics=candidate_metrics,
@@ -414,6 +487,8 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
             round_idx=round_idx,
             previous_score=expert_eval_info.get("previous_score"),
             terrain_info=terrain_info,
+            candidate_rois=round_candidate_context.get("candidate_rois"),
+            signal_roi_summary=round_candidate_context.get("signal_roi_summary"),
         )
         roi_decision = roi_round_decision.get("decision") or {
             "continue_refinement": bool(roi_round_decision.get("continue_refinement")),

@@ -61,7 +61,7 @@ def build_expert_model_loop_trace(
         "round_idx": round_idx,
         "stages": [
             "roi_extraction",
-            "roi_input_assessment",
+            "roi_input_context",
             "residual_diagnosis",
             "coarse_expert_family_routing",
             "family_parameter_optimization",

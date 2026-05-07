@@ -5,21 +5,6 @@ from typing import Any
 
 
 @dataclass
-class InputAssessment:
-    readiness_score: float
-    modality_status: dict[str, Any] = field(default_factory=dict)
-    strengths: list[str] = field(default_factory=list)
-    issues: list[str] = field(default_factory=list)
-    recommended_actions: list[str] = field(default_factory=list)
-    scene_analysis: dict[str, Any] = field(default_factory=dict)
-    terrain_summary: dict[str, Any] = field(default_factory=dict)
-    data_processing_summary: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
 class ReferenceQualityResult:
     assessment_phase: str
     metrics_json: str | None = None

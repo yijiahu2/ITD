@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ITD_agent.data_processing.fusion_postprocess import fuse_instance_layers
+from ITD_agent.data_processing.fusion.postprocess import fuse_instance_layers
 
 
 def test_fuse_instance_layers_skips_global_proximity_merge_without_boundary(tmp_path: Path) -> None:

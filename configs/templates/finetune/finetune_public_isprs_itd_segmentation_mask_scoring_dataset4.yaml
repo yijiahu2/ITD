@@ -26,7 +26,7 @@ public_dataset_include_dataset_ids_by_role:
   train: [4]
   val: [4]
   test: [4]
-public_dataset_holdout_test_fraction: 0.1
+public_dataset_holdout_test_fraction: 0.2
 public_dataset_holdout_test_source_roles: [train, val]
 public_dataset_holdout_test_seed: 42
 
@@ -40,13 +40,14 @@ segmentation_train_init_checkpoint: https://download.openmmlab.com/mmdetection/v
 segmentation_class_names:
   - crown
 segmentation_num_classes: 1
-segmentation_train_batch_size: 6
+segmentation_train_batch_size: 4
+segmentation_train_grad_accum_steps: 4
 segmentation_train_num_workers: 8
-segmentation_train_epochs: 4
-segmentation_train_lr: 0.00375
+segmentation_train_epochs: 12
+segmentation_train_lr: 0.02
 segmentation_train_weight_decay: 0.0001
 segmentation_train_seed: 42
-segmentation_train_val_interval: 2
+segmentation_train_val_interval: 1
 segmentation_train_amp: true
 segmentation_train_pin_memory: true
 segmentation_train_prefetch_factor: 4

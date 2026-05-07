@@ -6,6 +6,8 @@ from typing import Any
 
 from .benchmark_engine import evaluate_benchmark_vector_result
 from .contracts import FinalAssessmentResult
+from .decision_flags import build_decision_flags
+from .flow_decisions import build_final_benchmark_flow_decision, build_final_reference_flow_decision
 from .online_quality_engine import evaluate_online_quality
 
 
@@ -114,17 +116,9 @@ def evaluate_reference_quality_result(
     }
     online_quality = _build_online_quality_result(summary, runtime_cfg=runtime_cfg)
     if isinstance(online_quality, dict) and online_quality:
-        result["online_quality_score"] = online_quality.get("quality_score")
-        online_metrics = online_quality.get("metrics") or {}
-        for source_key, target_key in [
-            ("patch_context", "patch_context"),
-            ("semantic_instance_consistency", "area_consistency"),
-            ("geometry_plausibility", "geometry_diagnostics"),
-            ("height_consistency", "height_diagnostics"),
-        ]:
-            payload = online_metrics.get(source_key)
-            if isinstance(payload, dict) and payload:
-                result[target_key] = payload
+        result["online_quality"] = online_quality
+    result["decision_flags"] = build_decision_flags(result, runtime_cfg=runtime_cfg)
+    result["flow_decision"] = build_final_reference_flow_decision(result)
     return result
 
 
@@ -147,6 +141,8 @@ def evaluate_final_phase(
             gt_shp=str(gt_shp),
             score_field=benchmark_cfg.get("score_field"),
         )
+        payload["decision_flags"] = build_decision_flags(payload, runtime_cfg=runtime_cfg)
+        payload["flow_decision"] = build_final_benchmark_flow_decision(payload)
         return FinalAssessmentResult(evaluation_mode="benchmark", payload=payload).to_dict()
     if preferred_mode == "benchmark":
         return FinalAssessmentResult(

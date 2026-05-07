@@ -8,6 +8,23 @@ from typing import Any
 from .artifact_store import get_phase_dir
 from .contracts import ReferenceQualityResult
 from .detail_ranker import summarize_details_csv
+from .metrics_catalog import REFERENCE_METRIC_CATALOG
+
+
+def _reference_vector_path(cfg: dict[str, Any]) -> str | None:
+    return (
+        cfg.get("reference_vector_path")
+        or cfg.get("inventory_vector_path")
+        or cfg.get("xiaoban_shp")
+    )
+
+
+def _reference_id_field(cfg: dict[str, Any]) -> str | None:
+    return (
+        cfg.get("reference_id_field")
+        or cfg.get("inventory_id_field")
+        or cfg.get("xiaoban_id_field")
+    )
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -37,6 +54,8 @@ BOUNDARY_FOCUSED_SCORE_WEIGHTS = {
     "closure_error_abs": 0.20,
     "density_error_ratio": 0.10,
 }
+
+METRIC_CATEGORIES = REFERENCE_METRIC_CATALOG
 
 
 def _get_roi_refine_block(cfg: dict[str, Any] | None) -> dict[str, Any]:
@@ -98,11 +117,44 @@ def build_reference_score_breakdown(
         "closure_error_abs": float(closure),
         "density_error_ratio": float(max(density_ratio or 0.0, 0.0)),
     }
-    score = sum(normalized_metrics[key] * weights[key] for key in weights)
+    weighted_terms = {
+        key: {
+            **METRIC_CATEGORIES[key],
+            "value": normalized_metrics[key],
+            "weight": weights[key],
+            "contribution": normalized_metrics[key] * weights[key],
+        }
+        for key in weights
+    }
+    metric_groups: dict[str, dict[str, Any]] = {}
+    for key, term in weighted_terms.items():
+        category = str(term["category"])
+        group = metric_groups.setdefault(
+            category,
+            {
+                "category": category,
+                "label": term["label"],
+                "direction": term["direction"],
+                "metrics": [],
+                "contribution": 0.0,
+            },
+        )
+        group["metrics"].append(
+            {
+                "metric": key,
+                "value": term["value"],
+                "weight": term["weight"],
+                "contribution": term["contribution"],
+            }
+        )
+        group["contribution"] = float(group["contribution"]) + float(term["contribution"])
+    score = sum(float(term["contribution"]) for term in weighted_terms.values())
     return {
         "score": float(score),
         "weights": weights,
         "normalized_metrics": normalized_metrics,
+        "weighted_terms": weighted_terms,
+        "metric_groups": metric_groups,
         "focus_mode": focus_mode,
     }
 
@@ -136,14 +188,14 @@ def evaluate_reference_quality(
         str(inst_shp),
         "--patch_raster",
         str(cfg["input_image"]),
-        "--xiaoban_shp",
-        str(cfg["xiaoban_shp"]),
+        "--reference_vector",
+        str(_reference_vector_path(cfg)),
         "--evaluation_metrics_json",
         str(metrics_json),
         "--evaluation_details_csv",
         str(details_csv),
         "--id_field",
-        str(cfg["xiaoban_id_field"]),
+        str(_reference_id_field(cfg)),
         "--tree_count_field",
         str(cfg["tree_count_field"]),
         "--crown_field",

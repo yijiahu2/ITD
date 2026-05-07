@@ -168,7 +168,7 @@ sequenceDiagram
 
 作用边界：
 
-- 负责输入画像、基础先验提取、DEM 与小班等辅助数据准备
+- 负责输入画像、基础先验提取、DEM 与参考调查矢量等辅助数据准备
 - 负责 ROI 细化前的局部裁剪与局部数据包构建
 - 不负责策略推理和模型参数决策
 
@@ -197,7 +197,7 @@ sequenceDiagram
 - [terrain/dem_pipeline.py](/home/xth/forest_agent_project/ITD_agent/data_processing/terrain/dem_pipeline.py)
   - DEM 影像与 DOM 的对齐状态判断
 - [inventory/normalizer.py](/home/xth/forest_agent_project/ITD_agent/data_processing/inventory/normalizer.py)
-  - 调查表 / 小班矢量字段识别与标准字段映射
+  - 调查表 / 参考调查矢量字段识别与标准字段映射
 - [terrain/features.py](/home/xth/forest_agent_project/ITD_agent/data_processing/terrain/features.py)
   - 生成坡度、坡向、地貌、坡位等派生地形产品
 - [inventory/spatial_context.py](/home/xth/forest_agent_project/ITD_agent/data_processing/inventory/spatial_context.py)
@@ -217,22 +217,28 @@ sequenceDiagram
 
 关键文件：
 
-- [input_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/input_assessment.py)
+- [main_model_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/main_model_assessment.py)
+- [roi_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/roi_assessment.py)
+- [child_model_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/child_model_assessment.py)
+- [final_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/final_assessment.py)
+- [benchmark_engine.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/benchmark_engine.py)
+- [online_quality_engine.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/online_quality_engine.py)
+- [geometry_diagnostics.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/geometry_diagnostics.py)
+- [decision_flags.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/decision_flags.py)
 
 当前包含：
 
-- 输入模态完整性检查
-- 输入就绪度评分 `readiness_score`
-- 优势项 / 问题项 / 建议动作
-- 地形摘要 `terrain_summary`
-- 森林类型判断 `forest_type`
-- 林分条件判断 `stand_condition`
-- 影像纹理分析 `image_texture_analysis`
+- 主模型阶段结果评估
+- ROI 是否进入/继续细化的规则判定
+- 专家模型 / 子模型结果对比评估
+- 最终 reference / benchmark 评估
+- 在线几何诊断、错误分解和决策 flags
+- 微调前后效果评估
 
 说明：
 
-- 这里的第一次评估分析是“输入阶段评估”，不是主模型结果评估
-- 它的输出会被后续规划调度、LLM 网关、记忆检索和微调池上下文共同消费
+- `evaluation_analysis` 不再承担输入评估职责，输入契约已迁回 `input_layer`
+- 当前模块只负责公式、规则、派生诊断和决策 flags，不负责 ROI 候选生成和 LLM 决策
 
 ### 5. LLM 网关
 
@@ -253,7 +259,7 @@ sequenceDiagram
 说明：
 
 - LLM 网关接收的是 `scheduler_context` 或 `run_summary`
-- 因此只要上游把指标写入 `input_assessment` / `scene_profile` / `scheduler_context`，LLM 就能直接看到并参与推理
+- 因此只要上游把指标写入 `scene_profile` / `scheduler_context` / `metrics_summary`，LLM 就能直接看到并参与推理
 - 当前输入已经开始按模板化方式收口，尤其是 `run_retrospective`
 
 LLM 输入约束：
@@ -365,7 +371,7 @@ LLM 输入约束：
 
 - 第二次评估分析：
   - 对主模型结果做全局评估
-  - 输出指标和问题小班明细
+  - 输出指标和问题参考单元明细
   - 识别待细化 ROI
 - 第三次评估分析：
   - 对 ROI 细化后的合并结果做复评
@@ -521,9 +527,10 @@ LLM 输入约束：
 
 ### 2026-04-01 输入评估新增森林类型、林分条件与纹理分析
 
-- 模块：`evaluation_analysis.input_assessment`
+- 模块：`input_layer / data_processing.processing_summary`
 - 涉及文件：
-  - [ITD_agent/evaluation_analysis/input_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/input_assessment.py)
+  - `input_layer/*`
+  - `ITD_agent/data_processing/*`
   - [ITD_agent/data_processing/imagery/priors.py](/home/xth/forest_agent_project/ITD_agent/data_processing/imagery/priors.py)
   - [ITD_agent/memory_store/query.py](/home/xth/forest_agent_project/ITD_agent/memory_store/query.py)
   - [ITD_agent/planning/scheduler/context_builder.py](/home/xth/forest_agent_project/ITD_agent/planning/scheduler/context_builder.py)
@@ -558,7 +565,7 @@ LLM 输入约束：
 - 是否需要更新运行逻辑图：
   - 否，运行顺序未变，只是输入评估内容增强
 - 是否需要补充测试或实测记录：
-  - 建议下一次端到端实测后，把包含新 `input_assessment.scene_analysis` 的 summary 路径附到本文档
+  - 建议下一次端到端实测后，把包含新 `data_processing.input_assessment.scene_analysis` 的 summary 路径附到本文档
 
 ### 2026-04-02 LLM 网关输入模板化规范补充
 

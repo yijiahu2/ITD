@@ -22,6 +22,58 @@ class RemoteSensingImageSource:
 
 
 @dataclass
+class DomInputContract:
+    dom_id: str
+    source_path: str
+    working_dom_path: str
+    input_type: str
+    mainline_profile: str
+    width: int
+    height: int
+    pixel_count: int
+    bounds: list[float]
+    crs: str | None
+    transform: list[float] | None
+    working_to_original_transform: dict[str, Any] | None
+    gsd_x_m: float | None
+    gsd_y_m: float | None
+    recommended_gsd_m: float
+    acceptable_gsd_range_m: list[float]
+    gsd_status: str
+    band_count: int
+    dtype: str
+    band_mapping: dict[str, int]
+    normalization_policy: str
+    nodata: int | float | str | None
+    nodata_policy: str
+    valid_mask_path: str
+    global_valid_pixel_ratio_estimate: float | None
+    processing_block_px: int
+    processing_block_stride_px: int
+    processing_block_overlap_px: int
+    processing_edge_absorb_px: int
+    processing_block_min_preferred_px: int
+    processing_block_max_preferred_px: int
+    tile_px: int
+    tile_overlap_px: int
+    tile_stride_px: int
+    allow_elastic_model_input: bool
+    pad_if_smaller_than_model_input: bool
+    snap_last_tile_to_edge: bool
+    discard_padding_output: bool
+    bsize: int
+    processing_mode: str
+    estimated_block_count: int
+    estimated_tile_count: int
+    output_clip_policy: str
+    warnings: list[str] = field(default_factory=list)
+    status: str = "ready"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class DEMSource:
     id: str
     path: str
@@ -187,6 +239,7 @@ class PreparedInputIndex:
 class InputManifest:
     config_path: str | None = None
     remote_sensing: list[RemoteSensingImageSource] = field(default_factory=list)
+    dom_input_contract: DomInputContract | None = None
     terrain_dem: list[DEMSource] = field(default_factory=list)
     canopy_height: list[HeightRasterSource] = field(default_factory=list)
     surface_models: list[HeightRasterSource] = field(default_factory=list)
@@ -222,6 +275,14 @@ class InputManifest:
         return None
 
     @property
+    def reference_vector(self) -> str | None:
+        return self.survey_vector
+
+    @property
+    def inventory_vector(self) -> str | None:
+        return self.survey_vector
+
+    @property
     def survey_table_paths(self) -> list[str]:
         return [item.path for item in self.survey_tables if item.path]
 
@@ -247,6 +308,7 @@ class InputManifest:
         return {
             "config_path": self.config_path,
             "remote_sensing": [item.to_dict() for item in self.remote_sensing],
+            "dom_input_contract": self.dom_input_contract.to_dict() if self.dom_input_contract else None,
             "terrain_dem": [item.to_dict() for item in self.terrain_dem],
             "canopy_height": [item.to_dict() for item in self.canopy_height],
             "surface_models": [item.to_dict() for item in self.surface_models],
@@ -262,6 +324,8 @@ class InputManifest:
             "chm_paths": self.chm_paths,
             "dsm_paths": self.dsm_paths,
             "survey_vector": self.survey_vector,
+            "reference_vector": self.reference_vector,
+            "inventory_vector": self.inventory_vector,
             "survey_tables_paths": self.survey_table_paths,
             "domain_knowledge": self.domain_knowledge,
         }

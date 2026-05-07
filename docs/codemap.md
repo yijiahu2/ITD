@@ -54,6 +54,7 @@ This codemap reflects the current repository layout. It is the first document to
 ## Config Surface
 
 - `configs/examples/`: runnable example entry configs.
+- `docs/mainline_experiment_matrix.md`: A0-A4 / B0-B3 experiment matrix for the unified profile-driven pipeline.
 - `configs/templates/runtime/`: runtime templates for baseline and segmentation candidate/cascade/registry flows.
 - `configs/templates/finetune/`: finetune templates for data-processing and segmentation-model training flows.
 - `configs/templates/benchmark/`: benchmark and validation templates.
@@ -65,6 +66,7 @@ The current normalized config path accepts these top-level blocks:
 
 - `runtime`: run name, environment, work directory, inventory field names.
 - `inputs`: remote sensing, terrain, survey/inventory vectors, domain knowledge, public datasets.
+- `runtime.mainline_profile`: selects the unified pipeline input profile. `A_DOM_ONLY` runs the full agent pipeline with DOM-only evidence; `B_DOM_DEM_CHM_KNOWLEDGE` runs the same pipeline with DEM, CHM, and external knowledge enabled.
 - `ITD_agent`: planning, LLM gateway, data processing, and segmentation model blocks.
 - `segmentation`: direct segmentation parameter overrides.
 - `evaluation`: evaluation thresholds and final-report settings.

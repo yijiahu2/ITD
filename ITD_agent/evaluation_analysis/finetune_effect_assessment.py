@@ -7,7 +7,7 @@ import pandas as pd
 
 from .benchmark_engine import evaluate_benchmark_vector_result
 from .contracts import FinetuneEffectAssessment
-from .detail_ranker import summarize_details_csv
+from .flow_decisions import build_finetune_effect_flow_decision
 
 
 def _ensure_dir(path: str | Path) -> Path:
@@ -131,6 +131,30 @@ def _build_benchmark_gain(
     }
 
 
+def _build_compare_flags(summary: dict[str, Any]) -> dict[str, Any]:
+    gain_keys = ["mean_gain_tree_count", "mean_gain_crown", "mean_gain_closure", "mean_gain_density"]
+    gains = [summary.get(key) for key in gain_keys if summary.get(key) is not None]
+    positive_count = sum(1 for value in gains if float(value) > 0)
+    negative_count = sum(1 for value in gains if float(value) < 0)
+    benchmark_delta = ((summary.get("benchmark_gain") or {}).get("delta") or {})
+    ap50_delta = benchmark_delta.get("ap50")
+    regression_flag = bool(
+        (ap50_delta is not None and float(ap50_delta) < -0.01)
+        or (negative_count >= 2 and negative_count > positive_count)
+    )
+    accepted_improvement_flag = bool(
+        not regression_flag
+        and (
+            (ap50_delta is not None and float(ap50_delta) > 0.01)
+            or (positive_count >= 2 and positive_count >= negative_count)
+        )
+    )
+    return {
+        "accepted_improvement_flag": accepted_improvement_flag,
+        "regression_flag": regression_flag,
+    }
+
+
 def build_finetune_recommendation(
     cfg: dict[str, Any],
     *,
@@ -138,41 +162,9 @@ def build_finetune_recommendation(
     details_csv: str | None,
     roi_round_count: int,
 ) -> dict[str, Any]:
-    details_summary = summarize_details_csv(details_csv, top_k=5, cfg=cfg) if details_csv else {"top_k_xiaoban": []}
-    tree_ratio = float(metrics.get("tree_count_error_ratio") or 0.0)
-    crown_ratio = float(metrics.get("mean_crown_width_error_ratio") or 0.0)
-    closure_abs = float(metrics.get("closure_error_abs") or 0.0)
-    density_abs = float(metrics.get("density_error_abs") or 0.0)
+    from ITD_agent.finetune_pool.recommendation import build_finetune_recommendation as _impl
 
-    target_module = "segmentation_model"
-    if closure_abs >= 0.16 and tree_ratio < 0.18:
-        target_module = "data_processing"
-
-    planning_cfg = ((cfg.get("ITD_agent") or {}).get("planning") or {})
-    roi_cfg = planning_cfg.get("roi_extraction") or planning_cfg.get("roi_refine") or {}
-    should_recommend = (
-        tree_ratio >= 0.22
-        or crown_ratio >= 0.25
-        or closure_abs >= 0.12
-        or roi_round_count >= int(roi_cfg.get("max_rounds", 2))
-    )
-    trigger_mode = "defer_until_pool_threshold"
-    if len(details_summary.get("top_k_xiaoban") or []) >= 5 and should_recommend:
-        trigger_mode = "ready_for_pool_accumulation"
-
-    return {
-        "should_recommend": should_recommend,
-        "target_module": target_module,
-        "trigger_mode": trigger_mode,
-        "reason": "建议累计同类失败样本后再触发微调训练。" if should_recommend else "当前任务未达到微调建议阈值。",
-        "failure_summary": {
-            "tree_count_error_ratio": tree_ratio,
-            "mean_crown_width_error_ratio": crown_ratio,
-            "closure_error_abs": closure_abs,
-            "density_error_abs": density_abs,
-            "top_problem_cases": details_summary.get("top_k_xiaoban") or [],
-        },
-    }
+    return _impl(cfg, metrics=metrics, details_csv=details_csv, roi_round_count=roi_round_count)
 
 
 def compare_finetune_effect(
@@ -180,7 +172,7 @@ def compare_finetune_effect(
     before_csv: str,
     after_csv: str,
     out_dir: str,
-    join_col: str = "xiaoban_id",
+    join_col: str = "reference_unit_id",
     before_pred_shp: str | None = None,
     after_pred_shp: str | None = None,
     gt_shp: str | None = None,
@@ -190,6 +182,10 @@ def compare_finetune_effect(
     out_root = _ensure_dir(out_dir)
     before = pd.read_csv(before_csv)
     after = pd.read_csv(after_csv)
+    if join_col not in before.columns and join_col == "reference_unit_id" and "xiaoban_id" in before.columns:
+        before = before.rename(columns={"xiaoban_id": "reference_unit_id"})
+    if join_col not in after.columns and join_col == "reference_unit_id" and "xiaoban_id" in after.columns:
+        after = after.rename(columns={"xiaoban_id": "reference_unit_id"})
     if join_col not in before.columns:
         raise RuntimeError(f"before_csv 缺少主键列 {join_col}，实际列为: {list(before.columns)}")
     if join_col not in after.columns:
@@ -294,10 +290,15 @@ def compare_finetune_effect(
             "ground_truth_file": resolved_gt_shp,
         }
 
+    summary.update(_build_compare_flags(summary))
     summary_path = out_root / "finetune_gain_summary.json"
+    flow_decision = build_finetune_effect_flow_decision(summary)
+    summary["flow_decision"] = flow_decision
     _dump_json(summary, summary_path)
-    return FinetuneEffectAssessment(
+    result = FinetuneEffectAssessment(
         summary_json=str(summary_path),
         compare_csv=str(compare_csv),
         summary=summary,
     ).to_dict()
+    result["flow_decision"] = flow_decision
+    return result

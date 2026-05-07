@@ -68,7 +68,6 @@ def build_run_summary(
             "input_assessment": input_assessment,
         },
         "evaluation_analysis": {
-            "input_assessment": input_assessment,
             "main_model_assessment": main_eval_info,
             "expert_model_assessments": [item.get("expert_model_assessment") for item in roi_round_summaries],
             "reference_quality_final": final_eval_info,

@@ -5,7 +5,7 @@ base_config: /home/xth/forest_agent_project/configs/templates/runtime/runtime_do
 
 output_dir: /mnt/f/forest_agent_project/outputs/JX_ShanXia/finetune_public/isprs_itd_segmentation_htc
 
-segmentation_algorithm: mmdet_htc_cb_swin_l_maskiou
+segmentation_algorithm: mmdet_htc
 segmentation_dataset_dirname: external_segmentation_dataset
 segmentation_dataset_force_rebuild: true
 
@@ -44,8 +44,8 @@ segmentation_train_conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
 segmentation_train_conda_env: mmdetection
 segmentation_train_repo_root: /home/xth/mmdetection331
 segmentation_train_out_dirname: segmentation_training
-segmentation_train_base_config: /home/xth/forest_agent_project/configs/mmdet_custom/htc_cb_swin_l_maskiou.py
-segmentation_train_init_checkpoint: ""
+segmentation_train_base_config: /home/xth/mmdetection331/configs/htc/htc-without-semantic_r50_fpn_1x_coco.py
+segmentation_train_init_checkpoint: /home/xth/mmdetection331/checkpoints/htc_r50_fpn_1x_coco_20200317-7332cf16.pth
 
 segmentation_class_names:
   - crown
@@ -72,4 +72,4 @@ segmentation_finetuned_merge_iou_thr: 0.4
 segmentation_finetuned_required_outputs: ["y_inst_shp"]
 
 enable_rerun_after_finetune: true
-finetuned_suffix: "_segmentation_htc_cb_swin_l_maskiou_public_itd_ft_v1"
+finetuned_suffix: "_segmentation_htc_public_itd_ft_v1"

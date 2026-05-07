@@ -1,10 +1,7 @@
 tmp_debug/
 outputs/
 data/
-ITD_agent/memory_store/
-ITD_agent/finetune_pool/
 mlflow.db
-outputs/
 mlruns/
 artifacts/
 logs/

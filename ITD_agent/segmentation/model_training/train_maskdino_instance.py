@@ -97,6 +97,15 @@ def _build_dataset_names(algorithm_name: str) -> tuple[str, str, str]:
     return train_name, val_name, test_name
 
 
+def _grad_accum_steps(cfg: dict[str, Any]) -> int:
+    raw = cfg.get("segmentation_train_grad_accum_steps", 1)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, value)
+
+
 def _write_generated_config(
     *,
     out_path: Path,
@@ -218,6 +227,8 @@ def main() -> None:
     device = str(cfg.get("segmentation_train_device") or "cuda")
     num_gpus = int(cfg.get("segmentation_train_num_gpus", 1))
     use_amp = to_bool(cfg.get("segmentation_train_amp"), default=True)
+    resume_train = to_bool(cfg.get("segmentation_train_resume"), default=False)
+    grad_accum_steps = _grad_accum_steps(cfg)
     val_interval = int(cfg.get("segmentation_train_val_interval", 1))
 
     iters_per_epoch = max(1, math.ceil(num_train_images / max(batch_size, 1)))
@@ -270,7 +281,10 @@ def main() -> None:
         "train_epochs": epochs,
         "train_lr": base_lr,
         "train_weight_decay": weight_decay,
+        "train_grad_accum_steps": grad_accum_steps,
+        "train_effective_batch_size": batch_size * grad_accum_steps,
         "train_amp": use_amp,
+        "train_resume": resume_train,
         "driver_module": driver_module,
         "train_dataset_name": train_dataset_name,
         "val_dataset_name": val_dataset_name,
@@ -304,7 +318,8 @@ def main() -> None:
         f"export PYTHONPATH={PROJECT_ROOT}:{repo_root_path}:${{PYTHONPATH:-}} && "
         f"python -u -m {entry_module} "
         f"--num-gpus {num_gpus} "
-        f"--resume "
+        f"--grad-accum-steps {grad_accum_steps} "
+        f"{'--resume ' if resume_train else ''}"
         f"--config-file {generated_config} "
         f"--train-json {train_json} "
         f"--val-json {val_json} "

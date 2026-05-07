@@ -26,9 +26,9 @@ from ITD_agent.data_processing.roi.extractor import (
     make_bad_roi_gdf as dp_make_bad_roi_gdf,
     prepare_roi_refinement_inputs,
 )
-from ITD_agent.data_processing.inventory.normalizer import crop_raster_to_geometry as dp_crop_raster_to_geometry
+from ITD_agent.data_processing.vector import crop_raster_to_geometry as dp_crop_raster_to_geometry
 from ITD_agent.segmentation.executor import execute_segmentation_model
-from ITD_agent.data_processing.instance_ops import (
+from ITD_agent.data_processing.fusion.instance_ops import (
     dedupe_instances_by_overlap,
     filter_instances_to_ids_by_overlap,
     merge_split_instances_by_proximity,
@@ -321,6 +321,32 @@ def clip_xiaoban_to_geometry_with_fields(
         density_field=density_field,
     )
 
+
+def clip_reference_vector_to_geometry_with_fields(
+    src_vector: str,
+    geom_gdf: gpd.GeoDataFrame,
+    out_vector: str,
+    reference_id_field: str,
+    allowed_ids: Optional[List[str]] = None,
+    tree_count_field: Optional[str] = None,
+    crown_field: Optional[str] = None,
+    closure_field: Optional[str] = None,
+    area_ha_field: Optional[str] = None,
+    density_field: Optional[str] = None,
+):
+    dp_clip_xiaoban_to_geometry_with_fields(
+        src_vector=src_vector,
+        geom_gdf=geom_gdf,
+        out_vector=out_vector,
+        xiaoban_id_field=reference_id_field,
+        allowed_ids=allowed_ids,
+        tree_count_field=tree_count_field,
+        crown_field=crown_field,
+        closure_field=closure_field,
+        area_ha_field=area_ha_field,
+        density_field=density_field,
+    )
+
 def crop_roi_terrain_bundle(
     roi_geom_gdf: gpd.GeoDataFrame,
     roi_dir: str,
@@ -456,6 +482,22 @@ def select_bad_xiaoban_rows(
     return bad.reset_index(drop=True)
 
 
+def select_bad_reference_unit_rows(
+    details_csv: str,
+    tree_count_err_thr: float = 80.0,
+    crown_err_thr: float = 0.40,
+    closure_err_thr: float = 0.15,
+    top_k: int = 3,
+) -> pd.DataFrame:
+    return select_bad_xiaoban_rows(
+        details_csv=details_csv,
+        tree_count_err_thr=tree_count_err_thr,
+        crown_err_thr=crown_err_thr,
+        closure_err_thr=closure_err_thr,
+        top_k=top_k,
+    )
+
+
 # =========================
 # ROI
 # =========================
@@ -470,6 +512,20 @@ def make_bad_roi_gdf(
         xiaoban_shp=xiaoban_shp,
         xiaoban_id_field=xiaoban_id_field,
         bad_ids=bad_ids,
+        buffer_m=buffer_m,
+    )
+
+
+def make_bad_reference_unit_roi_gdf(
+    reference_vector_path: str,
+    reference_id_field: str,
+    bad_reference_unit_ids: List[str],
+    buffer_m: float = 5.0,
+) -> gpd.GeoDataFrame:
+    return dp_make_bad_roi_gdf(
+        xiaoban_shp=reference_vector_path,
+        xiaoban_id_field=reference_id_field,
+        bad_ids=bad_reference_unit_ids,
         buffer_m=buffer_m,
     )
 
@@ -678,10 +734,10 @@ def evaluate_merged_result(
         "scripts.evaluate_reference_quality",
         "--inst_shp", merged_shp,
         "--patch_raster", base_cfg["input_image"],
-        "--xiaoban_shp", base_cfg["xiaoban_shp"],
+        "--reference_vector", base_cfg["reference_vector_path"] if base_cfg.get("reference_vector_path") else base_cfg["xiaoban_shp"],
         "--out_json", merged_metrics_json,
         "--out_csv", merged_details_csv,
-        "--id_field", base_cfg["xiaoban_id_field"],
+        "--id_field", base_cfg["reference_id_field"] if base_cfg.get("reference_id_field") else base_cfg["xiaoban_id_field"],
         "--tree_count_field", base_cfg["tree_count_field"],
         "--crown_field", base_cfg["crown_field"],
         "--closure_field", base_cfg["closure_field"],
@@ -1383,7 +1439,9 @@ def run_one_group_refinement(
         "group_root": str(group_root),
         "strategy": strategy,
         "params": params,
+        "reference_unit_ids": xiaoban_ids,
         "xiaoban_ids": xiaoban_ids,
+        "prior_reference_unit_ids": prior_xiaoban_ids,
         "prior_xiaoban_ids": prior_xiaoban_ids,
         "local_config": local_config,
         "local_output_dir": local_output_dir,
@@ -1392,6 +1450,7 @@ def run_one_group_refinement(
         "local_inst_shp": local_inst_shp,
         "merged_after_group_shp": merged_shp,
         "roi_image_tif": local_image,
+        "roi_reference_vector_path": local_xiaoban,
         "roi_xiaoban_shp": local_xiaoban,
         "roi_dem_tif": roi_inputs.get("roi_dem_tif"),
         "roi_slope_tif": roi_inputs.get("roi_slope_tif"),
@@ -1450,9 +1509,9 @@ def run_local_refinement(
     else:
         bad_df = select_bad_xiaoban_rows(global_details_csv, top_k=top_k)
         if bad_df.empty:
-            raise ValueError("No xiaoban rows selected from details.csv")
+            raise ValueError("No reference unit rows selected from details.csv")
         bad_ids = bad_df["xiaoban_id"].astype(str).tolist()
-        print(f"[local_refine] bad_xiaoban_ids = {bad_ids}")
+        print(f"[local_refine] bad_reference_unit_ids = {bad_ids}")
         group_plan = build_group_plan(
             bad_df=bad_df,
             base_params=base_params,
@@ -1461,7 +1520,7 @@ def run_local_refinement(
 
     print("[local_refine] group_plan:")
     for i, g in enumerate(group_plan, 1):
-        print(f"  - group {i}: strategy={g['strategy']}, xiaoban_ids={g['xiaoban_ids']}, params={g['params']}")
+        print(f"  - group {i}: strategy={g['strategy']}, reference_unit_ids={g.get('reference_unit_ids') or g['xiaoban_ids']}, params={g['params']}")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = "local_refine_signal_" if roi_candidates else "local_refine_"
@@ -1490,6 +1549,7 @@ def run_local_refinement(
             "base_params": base_params,
             "preferred_expert_model": preferred_expert_model,
             "preferred_expert_runtime_overrides": preferred_expert_runtime_overrides,
+            "bad_reference_unit_ids": bad_ids,
             "bad_xiaoban_ids": bad_ids,
             "roi_candidates": roi_candidates or [],
             "group_plan": group_plan,

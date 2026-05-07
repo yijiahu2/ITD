@@ -12,7 +12,7 @@ import rasterio
 from rasterio.windows import Window
 from shapely.geometry import box
 
-from ITD_agent.data_processing.inventory.normalizer import crop_raster_to_geometry
+from ITD_agent.data_processing.vector import crop_raster_to_geometry
 from ITD_agent.data_processing.roi.extractor import clip_xiaoban_to_geometry_with_fields, crop_roi_terrain_bundle
 from ITD_agent.evaluation_analysis.reference_quality_engine import evaluate_reference_quality, score_reference_metrics
 from tools.cached_stage_runners import run_segmentation_cached, run_semantic_prior_cached
@@ -379,16 +379,17 @@ def _evaluate_exact_if_possible(
     pilot_image: str,
     y_inst_shp: str,
 ) -> dict[str, Any]:
-    xiaoban_shp = runtime_cfg.get("xiaoban_shp")
-    if not xiaoban_shp or not Path(str(xiaoban_shp)).exists():
+    reference_vector_path = runtime_cfg.get("reference_vector_path") or runtime_cfg.get("inventory_vector_path") or runtime_cfg.get("xiaoban_shp")
+    reference_id_field = runtime_cfg.get("reference_id_field") or runtime_cfg.get("inventory_id_field") or runtime_cfg.get("xiaoban_id_field")
+    if not reference_vector_path or not Path(str(reference_vector_path)).exists():
         return {}
 
     try:
         clipped_xiaoban = clip_xiaoban_to_geometry_with_fields(
-            src_vector=str(xiaoban_shp),
+            src_vector=str(reference_vector_path),
             geom_gdf=pilot_geom_gdf,
             out_vector=str(pilot_dir / "pilot_xiaoban.gpkg"),
-            xiaoban_id_field=str(runtime_cfg["xiaoban_id_field"]),
+            xiaoban_id_field=str(reference_id_field),
             tree_count_field=runtime_cfg.get("tree_count_field"),
             crown_field=runtime_cfg.get("crown_field"),
             closure_field=runtime_cfg.get("closure_field"),
@@ -410,6 +411,8 @@ def _evaluate_exact_if_possible(
     )
     eval_cfg = dict(runtime_cfg)
     eval_cfg["input_image"] = str(pilot_image)
+    eval_cfg["reference_vector_path"] = str(clipped_xiaoban)
+    eval_cfg["inventory_vector_path"] = str(clipped_xiaoban)
     eval_cfg["xiaoban_shp"] = str(clipped_xiaoban)
     eval_cfg["output_dir"] = str(pilot_dir / "evaluation")
     metrics_json = str(pilot_dir / "evaluation" / "pilot_metrics.json")

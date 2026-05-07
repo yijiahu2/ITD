@@ -3,12 +3,28 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ITD_agent.data_processing.inventory.normalizer import prepare_spatial_context
+from ITD_agent.data_processing.vector import prepare_spatial_context
 from ITD_agent.data_processing.terrain.dem_pipeline import generate_terrain_products
 
 
 EVAL_METRICS_FILENAME = "evaluation_metrics.json"
 EVAL_DETAILS_FILENAME = "evaluation_details.csv"
+
+
+def _reference_vector_path(cfg: dict[str, Any]) -> str | None:
+    return (
+        cfg.get("reference_vector_path")
+        or cfg.get("inventory_vector_path")
+        or cfg.get("xiaoban_shp")
+    )
+
+
+def _reference_id_field(cfg: dict[str, Any]) -> str | None:
+    return (
+        cfg.get("reference_id_field")
+        or cfg.get("inventory_id_field")
+        or cfg.get("xiaoban_id_field")
+    )
 
 
 def get_stage_output_paths(cfg: dict[str, Any]) -> dict[str, str]:
@@ -77,9 +93,9 @@ def prepare_terrain_inputs_from_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
             context_result = prepare_spatial_context(
                 dom_tif=input_image,
                 dem_tif=dem_tif,
-                xiaoban_shp=cfg.get("xiaoban_shp"),
+                xiaoban_shp=_reference_vector_path(cfg),
                 out_dir=context_dir,
-                xiaoban_id_field=cfg.get("xiaoban_id_field"),
+                xiaoban_id_field=_reference_id_field(cfg),
                 tree_count_field=cfg.get("tree_count_field"),
                 crown_field=cfg.get("crown_field"),
                 closure_field=cfg.get("closure_field"),
@@ -165,16 +181,18 @@ def validate_runtime_cfg(cfg: dict[str, Any]) -> None:
             raise ValueError(f"Missing required config key: {key}")
 
     optional_reference_group = [
-        "xiaoban_shp",
-        "xiaoban_id_field",
+        "reference_vector_path",
+        "reference_id_field",
         "tree_count_field",
         "crown_field",
         "closure_field",
         "area_ha_field",
     ]
-    if cfg.get("xiaoban_shp"):
+    if _reference_vector_path(cfg):
+        cfg.setdefault("reference_vector_path", _reference_vector_path(cfg))
+        cfg.setdefault("reference_id_field", _reference_id_field(cfg))
         for key in optional_reference_group[1:]:
-            if key not in cfg:
+            if key not in cfg and key.replace("reference_", "inventory_") not in cfg and key.replace("reference_", "xiaoban_") not in cfg:
                 raise ValueError(f"Missing required optional-reference config key: {key}")
 
     if int(cfg["bsize"]) != 256:
@@ -191,8 +209,10 @@ def collect_run_metadata(cfg: dict[str, Any], terrain_info: dict[str, Any]) -> d
         "agent_version",
         "input_image",
         "output_dir",
-        "xiaoban_shp",
-        "xiaoban_id_field",
+        "reference_vector_path",
+        "reference_id_field",
+        "inventory_vector_path",
+        "inventory_id_field",
         "tree_count_field",
         "crown_field",
         "closure_field",

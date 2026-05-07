@@ -27,6 +27,9 @@ def register_input_bundle(
     registry_root.mkdir(parents=True, exist_ok=True)
 
     manifest_path = _write_json(manifest.to_dict(), registry_root / "input_manifest.json")
+    dom_contract_path = None
+    if manifest.dom_input_contract:
+        dom_contract_path = _write_json(manifest.dom_input_contract.to_dict(), registry_root / "dom_input_contract.json")
     validation_path = None
     prepared_index_path = None
     if manifest.validation:
@@ -37,6 +40,7 @@ def register_input_bundle(
     registry_payload = {
         "registry_root": str(registry_root),
         "manifest_json": manifest_path,
+        "dom_input_contract_json": dom_contract_path,
         "validation_json": validation_path,
         "prepared_index_json": prepared_index_path,
     }

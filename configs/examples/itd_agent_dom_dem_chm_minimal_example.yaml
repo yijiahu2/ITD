@@ -1,6 +1,7 @@
 runtime:
   experiment_name: forest_agent_dev
   run_name: dom_dem_chm_minimal_example
+  mainline_profile: B_DOM_DEM_CHM_KNOWLEDGE
   conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
   conda_env: tcd
   work_dir: /home/xth/tcd/test_prediction

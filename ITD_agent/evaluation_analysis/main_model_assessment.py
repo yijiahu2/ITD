@@ -2,8 +2,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from .decision_flags import build_decision_flags
+from .flow_decisions import build_main_model_flow_decision
 from .online_quality_engine import evaluate_online_quality
 from .reference_quality_engine import evaluate_reference_quality
+
+
+def _has_reference_inventory(cfg: dict[str, Any]) -> bool:
+    return bool(
+        cfg.get("reference_vector_path")
+        or cfg.get("inventory_vector_path")
+        or cfg.get("xiaoban_shp")
+    )
 
 
 def evaluate_main_model_assessment(
@@ -21,8 +31,8 @@ def evaluate_main_model_assessment(
         chm_tif=cfg.get("chm_tif"),
         patch_raster=cfg.get("input_image"),
     )
-    if not cfg.get("xiaoban_shp"):
-        return {
+    if not _has_reference_inventory(cfg):
+        result = {
             "assessment_phase": "main_model",
             "assessment_mode": "online_only",
             "metrics_json": metrics_json,
@@ -33,6 +43,9 @@ def evaluate_main_model_assessment(
             "online_quality": online_eval,
             "terrain_info": terrain_info,
         }
+        result["decision_flags"] = build_decision_flags(result, runtime_cfg=cfg)
+        result["flow_decision"] = build_main_model_flow_decision(result)
+        return result
 
     reference_eval = evaluate_reference_quality(
         cfg,
@@ -45,4 +58,6 @@ def evaluate_main_model_assessment(
     )
     reference_eval["assessment_mode"] = "online_plus_reference"
     reference_eval["online_quality"] = online_eval
+    reference_eval["decision_flags"] = build_decision_flags(reference_eval, runtime_cfg=cfg)
+    reference_eval["flow_decision"] = build_main_model_flow_decision(reference_eval)
     return reference_eval

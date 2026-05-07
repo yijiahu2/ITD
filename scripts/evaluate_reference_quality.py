@@ -22,13 +22,13 @@ import rasterio
 from rasterio.mask import mask
 from shapely.geometry import box
 
-from ITD_agent.data_processing.inventory.normalizer import (
+from ITD_agent.data_processing.vector import (
     equivalent_crown_width,
     inventory_mean_crown_width_from_geometry,
     safe_float,
     standardize_inventory_crown_width,
 )
-from ITD_agent.data_processing.instance_ops import assign_instances_to_polygons
+from ITD_agent.data_processing.fusion.instance_ops import assign_instances_to_polygons
 
 
 def normalize_closure(v):
@@ -811,16 +811,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tree_crowns_shp", "--inst_shp", dest="inst_shp", required=True, help="Path to tree_crowns.shp / Y_inst.shp")
     parser.add_argument("--patch_raster", required=True, help="Path to patch tif / original input tif")
-    parser.add_argument("--xiaoban_shp", required=True, help="Path to xiaoban polygon shp/gpkg")
+    parser.add_argument("--reference_vector", "--inventory_vector", "--xiaoban_shp", dest="reference_vector", required=True, help="Path to reference/inventory polygon vector")
     parser.add_argument("--evaluation_metrics_json", "--out_json", dest="out_json", required=True, help="Output evaluation metrics json")
     parser.add_argument("--evaluation_details_csv", "--out_csv", dest="out_csv", required=True, help="Output evaluation details csv")
 
-    parser.add_argument("--id_field", default="XBH", help="小班ID字段名")
-    parser.add_argument("--tree_count_field", default="LMSL", help="林木数量字段")
-    parser.add_argument("--crown_field", default="PJGF", help="平均冠幅字段")
-    parser.add_argument("--closure_field", default="YBD", help="郁闭度字段")
-    parser.add_argument("--density_field", default=None, help="林分密度字段（可空）")
-    parser.add_argument("--area_ha_field", default="MJ_hm2", help="面积/公顷字段")
+    parser.add_argument("--id_field", default="XBH", help="参考单元 ID 字段名")
+    parser.add_argument("--tree_count_field", default="LMSL", help="参考树木数量字段")
+    parser.add_argument("--crown_field", default="PJGF", help="参考平均冠幅字段")
+    parser.add_argument("--closure_field", default="YBD", help="参考郁闭度字段")
+    parser.add_argument("--density_field", default=None, help="参考林分密度字段（可空）")
+    parser.add_argument("--area_ha_field", default="MJ_hm2", help="参考面积/公顷字段")
     parser.add_argument("--assign_method", default="max_overlap", choices=["max_overlap", "centroid"])
 
     # terrain 输入
@@ -851,29 +851,29 @@ def main():
     patch = get_patch_polygon_from_raster(args.patch_raster)
     patch = ensure_projected_metric_crs(patch)
 
-    # 2. xiaoban
-    xiaoban = gpd.read_file(args.xiaoban_shp)
-    if xiaoban.crs is None:
-        raise ValueError("Xiaoban shapefile has no CRS.")
+    # 2. reference inventory vector
+    reference_vector = gpd.read_file(args.reference_vector)
+    if reference_vector.crs is None:
+        raise ValueError("Reference inventory vector has no CRS.")
 
-    validate_field_exists(xiaoban, args.id_field, required=True)
-    validate_field_exists(xiaoban, args.tree_count_field, required=False)
-    validate_field_exists(xiaoban, args.crown_field, required=False)
-    validate_field_exists(xiaoban, args.closure_field, required=False)
-    validate_field_exists(xiaoban, args.area_ha_field, required=False)
+    validate_field_exists(reference_vector, args.id_field, required=True)
+    validate_field_exists(reference_vector, args.tree_count_field, required=False)
+    validate_field_exists(reference_vector, args.crown_field, required=False)
+    validate_field_exists(reference_vector, args.closure_field, required=False)
+    validate_field_exists(reference_vector, args.area_ha_field, required=False)
     if args.density_field is not None:
-        validate_field_exists(xiaoban, args.density_field, required=False)
+        validate_field_exists(reference_vector, args.density_field, required=False)
 
-    xiaoban = xiaoban.to_crs(patch.crs)
-    xiaoban = xiaoban[xiaoban.geometry.notnull() & (~xiaoban.geometry.is_empty)].copy()
+    reference_vector = reference_vector.to_crs(patch.crs)
+    reference_vector = reference_vector[reference_vector.geometry.notnull() & (~reference_vector.geometry.is_empty)].copy()
 
-    xiaoban_clip = overlay_patch_xiaoban(patch, xiaoban, args.id_field)
-    if len(xiaoban_clip) == 0:
-        raise ValueError("No overlapping xiaoban found for this patch.")
+    reference_clip = overlay_patch_xiaoban(patch, reference_vector, args.id_field)
+    if len(reference_clip) == 0:
+        raise ValueError("No overlapping reference inventory polygons found for this patch.")
 
-    # 2.1 terrain attach to clipped xiaoban
-    xiaoban_clip = attach_terrain_stats_to_xiaoban_clip(
-        xiaoban_clip_gdf=xiaoban_clip,
+    # 2.1 terrain attach to clipped reference units
+    reference_clip = attach_terrain_stats_to_xiaoban_clip(
+        xiaoban_clip_gdf=reference_clip,
         dem_tif=terrain_info["dem_tif"],
         slope_tif=terrain_info["slope_tif"],
         aspect_tif=terrain_info["aspect_tif"],
@@ -907,7 +907,7 @@ def main():
     if len(inst) == 0:
         metrics = compute_patch_level_metrics(
             inst,
-            xiaoban_clip,
+            reference_clip,
             patch_area_m2,
             args.tree_count_field,
             args.crown_field,
@@ -934,10 +934,10 @@ def main():
     inst["eq_crown_width_m"] = inst["inst_area_m2"].apply(equivalent_crown_width)
     inst["inventory_crown_width_m"] = inst.geometry.apply(inventory_mean_crown_width_from_geometry)
 
-    # 4. assign instances to xiaoban
+    # 4. assign instances to reference inventory polygons
     inst_assigned = assign_instances_to_polygons(
         inst,
-        xiaoban_clip,
+        reference_clip,
         args.id_field,
         method=args.assign_method
     )
@@ -948,7 +948,7 @@ def main():
     # 5. patch-level metrics
     metrics = compute_patch_level_metrics(
         inst_assigned_valid,
-        xiaoban_clip,
+        reference_clip,
         patch_area_m2,
         args.tree_count_field,
         args.crown_field,
@@ -965,10 +965,10 @@ def main():
     metrics["terrain_aspect_tif"] = terrain_info.get("aspect_tif")
     metrics.update(patch_terrain_metrics)
 
-    # 6. xiaoban-level detail
+    # 6. reference-unit level detail
     details_df = compute_xiaoban_level_details(
         inst_assigned_valid,
-        xiaoban_clip,
+        reference_clip,
         args.id_field,
         args.crown_field,
         args.closure_field,

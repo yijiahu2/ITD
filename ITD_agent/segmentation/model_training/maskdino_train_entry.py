@@ -50,6 +50,61 @@ def _register_dataset(name: str, json_file: str, image_root: str, thing_classes:
     )
 
 
+def _patch_gradient_accumulation(maskdino_train_net, grad_accum_steps: int) -> None:
+    if grad_accum_steps <= 1:
+        return
+
+    import torch
+
+    class GradientAccumulationOptimizer(torch.optim.Optimizer):
+        def __init__(self, optimizer, accum_steps: int):
+            super().__init__(optimizer.param_groups, optimizer.defaults)
+            self._optimizer = optimizer
+            self._accum_steps = max(1, int(accum_steps))
+            self._micro_step = 0
+            self._step_supports_amp_scaling = getattr(optimizer, "_step_supports_amp_scaling", False)
+            self.state = optimizer.state
+
+        def zero_grad(self, *args, **kwargs):
+            if self._micro_step % self._accum_steps == 0:
+                return self._optimizer.zero_grad(*args, **kwargs)
+            return None
+
+        def step(self, *args, **kwargs):
+            self._micro_step += 1
+            if self._micro_step % self._accum_steps != 0:
+                return None
+            for group in self._optimizer.param_groups:
+                for param in group.get("params", []):
+                    grad = getattr(param, "grad", None)
+                    if grad is not None:
+                        grad.div_(self._accum_steps)
+            return self._optimizer.step(*args, **kwargs)
+
+        def state_dict(self):
+            state = self._optimizer.state_dict()
+            state["_forest_agent_grad_accum_steps"] = self._accum_steps
+            state["_forest_agent_micro_step"] = self._micro_step
+            return state
+
+        def load_state_dict(self, state_dict):
+            self._accum_steps = int(state_dict.pop("_forest_agent_grad_accum_steps", self._accum_steps))
+            self._micro_step = int(state_dict.pop("_forest_agent_micro_step", 0))
+            return self._optimizer.load_state_dict(state_dict)
+
+        def __getattr__(self, name):
+            return getattr(self._optimizer, name)
+
+    original_build_optimizer = maskdino_train_net.Trainer.build_optimizer
+
+    @classmethod
+    def patched_build_optimizer(cls, cfg, model):
+        optimizer = original_build_optimizer(cfg, model)
+        return GradientAccumulationOptimizer(optimizer, grad_accum_steps)
+
+    maskdino_train_net.Trainer.build_optimizer = patched_build_optimizer
+
+
 def main() -> None:
     sys.stdout = _BrokenPipeTolerantStream(sys.stdout)
     sys.stderr = _BrokenPipeTolerantStream(sys.stderr)
@@ -71,6 +126,7 @@ def main() -> None:
     parser.add_argument("--test-dataset-name")
     parser.add_argument("--thing-classes", required=True)
     parser.add_argument("--EVAL_FLAG", type=int, default=1)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
     args = parser.parse_args()
 
     thing_classes = _split_classes(args.thing_classes)
@@ -96,6 +152,7 @@ def main() -> None:
                 thing_classes,
             )
         import train_net as maskdino_train_net
+        _patch_gradient_accumulation(maskdino_train_net, max(1, int(worker_args.grad_accum_steps)))
 
         maskdino_train_net.main(worker_args)
 

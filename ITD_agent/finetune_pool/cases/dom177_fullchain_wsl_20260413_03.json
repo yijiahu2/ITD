@@ -1,0 +1,249 @@
+{
+  "timestamp": "2026-04-13T21:01:54",
+  "run_name": "dom177_fullchain_wsl_20260413_03",
+  "input_manifest": {
+    "config_path": "/home/xth/forest_agent_project/outputs/JX_ShanXia/dom177_fullchain_wsl_20260413_01/runtime_execution_config.yaml",
+    "remote_sensing": [
+      {
+        "id": "image_001",
+        "path": "/mnt/f/forest_agent_project/input/JX_ShanXia/DOM/dom177.TIF",
+        "sensor": null,
+        "resolution_m": null,
+        "crs": null,
+        "bands": [],
+        "nodata": null,
+        "acquired_at": null,
+        "required": true,
+        "metadata": {}
+      }
+    ],
+    "terrain_dem": [
+      {
+        "id": "dem_001",
+        "path": "/mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif",
+        "resolution_m": null,
+        "crs": null,
+        "vertical_unit": null,
+        "required": false,
+        "metadata": {}
+      },
+      {
+        "id": "shanxia_dem",
+        "path": "/mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif",
+        "resolution_m": 1.0,
+        "crs": "EPSG:4547",
+        "vertical_unit": "m",
+        "required": false,
+        "metadata": {}
+      }
+    ],
+    "survey_tables": [],
+    "industry_vectors": [
+      {
+        "id": "industry_vector_001",
+        "path": "/mnt/f/forest_agent_project/input/JX_ShanXia/SHP/xiaoban29pro.shp",
+        "geometry_type": "polygon",
+        "crs": null,
+        "key_fields": [],
+        "field_mapping": {
+          "reference_unit_id": "XBH",
+          "tree_count": "LMSL",
+          "crown_width": "PJGF",
+          "closure": "YBD",
+          "area_ha": "MJ_hm2"
+        },
+        "required": false,
+        "metadata": {}
+      }
+    ],
+    "domain_knowledge_items": [],
+    "public_datasets": [],
+    "metadata": {
+      "schema_version": "itd_input_v1",
+      "config_dir": "/home/xth/forest_agent_project/outputs/JX_ShanXia/dom177_fullchain_wsl_20260413_01",
+      "input_modalities": {
+        "image": true,
+        "dem": true,
+        "inventory": true,
+        "knowledge": false,
+        "public_datasets": false
+      }
+    },
+    "validation": {
+      "status": "ok",
+      "error_count": 0,
+      "warning_count": 0,
+      "issues": []
+    },
+    "preparation": {
+      "registry_root": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/input_registry",
+      "prepared_root": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/prepared_inputs",
+      "assets": [
+        {
+          "source_type": "remote_sensing",
+          "source_id": "image_001",
+          "raw_path": "/mnt/f/forest_agent_project/input/JX_ShanXia/DOM/dom177.TIF",
+          "prepared_path": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/prepared_inputs/remote_sensing/image_001.TIF",
+          "registry_key": "remote_sensing/image_001",
+          "preparation_actions": [
+            "validate_readability",
+            "reproject_if_needed",
+            "align_to_reference_grid",
+            "extract_image_quality_features"
+          ],
+          "notes": [
+            "作为高分辨率遥感影像主输入。"
+          ]
+        },
+        {
+          "source_type": "terrain_dem",
+          "source_id": "dem_001",
+          "raw_path": "/mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif",
+          "prepared_path": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/prepared_inputs/terrain_dem/dem_001.tif",
+          "registry_key": "terrain_dem/dem_001",
+          "preparation_actions": [
+            "validate_readability",
+            "reproject_if_needed",
+            "align_to_reference_grid",
+            "derive_slope_aspect_landform"
+          ],
+          "notes": [
+            "为数据处理模块提供地形先验。"
+          ]
+        },
+        {
+          "source_type": "terrain_dem",
+          "source_id": "shanxia_dem",
+          "raw_path": "/mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif",
+          "prepared_path": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/prepared_inputs/terrain_dem/shanxia_dem.tif",
+          "registry_key": "terrain_dem/shanxia_dem",
+          "preparation_actions": [
+            "validate_readability",
+            "reproject_if_needed",
+            "align_to_reference_grid",
+            "derive_slope_aspect_landform"
+          ],
+          "notes": [
+            "为数据处理模块提供地形先验。"
+          ]
+        },
+        {
+          "source_type": "industry_vector",
+          "source_id": "industry_vector_001",
+          "raw_path": "/mnt/f/forest_agent_project/input/JX_ShanXia/SHP/xiaoban29pro.shp",
+          "prepared_path": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/prepared_inputs/industry_vectors/industry_vector_001.shp",
+          "registry_key": "industry_vectors/industry_vector_001",
+          "preparation_actions": [
+            "reproject_if_needed",
+            "standardize_field_mapping",
+            "build_spatial_index"
+          ],
+          "notes": [
+            "用于小班边界、行业属性和 ROI 约束。"
+          ]
+        }
+      ],
+      "metadata": {
+        "workspace": {
+          "workspace_root": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01",
+          "registry_root": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/input_registry",
+          "prepared_root": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_01/prepared_inputs"
+        },
+        "asset_counts": {
+          "remote_sensing": 1,
+          "terrain_dem": 2,
+          "survey_tables": 0,
+          "industry_vectors": 1,
+          "domain_knowledge": 0,
+          "public_datasets": 0
+        }
+      }
+    },
+    "remote_sensing_images": [
+      "/mnt/f/forest_agent_project/input/JX_ShanXia/DOM/dom177.TIF"
+    ],
+    "dem_paths": [
+      "/mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif",
+      "/mnt/f/forest_agent_project/input/JX_ShanXia/DEM/shanxia_DEM1m.tif"
+    ],
+    "survey_vector": "/mnt/f/forest_agent_project/input/JX_ShanXia/SHP/xiaoban29pro.shp",
+    "survey_tables_paths": [],
+    "domain_knowledge": []
+  },
+  "details_csv": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_03/roi_refinement/local_refine_signal_signal_roi_00_02_signal_roi_00_03_signal_roi_00_01_20260413_205624/merged_details.csv",
+  "summary_json": "/tmp/itd_agent_runtime/dom177_fullchain_wsl_20260413_03/ITD_agent_run_summary.json",
+  "sample_count": 2,
+  "public_dataset_candidate_count": 0,
+  "trigger_snapshot": {
+    "timestamp": "2026-04-13T21:01:54",
+    "run_name": "dom177_fullchain_wsl_20260413_03",
+    "trigger_ready": false,
+    "recommended_target_module": "segmentation_model",
+    "recommended_target_model_role": "child_model",
+    "recommended_target_expert_family": "shadow_topography",
+    "recommended_failure_category": "crown_overlap_conflict",
+    "trigger_reason": "child_model/crown_overlap_conflict 当前累计 1 个样本，尚未达到触发阈值。",
+    "sample_counts": {
+      "failed_roi_sample": 2
+    },
+    "ready_counts": {
+      "failed_roi_sample": 2
+    },
+    "cluster_summaries": [
+      {
+        "cluster_id": "child_model:shadow_topography:crown_overlap_conflict",
+        "target_model_role": "child_model",
+        "failure_category": "crown_overlap_conflict",
+        "sample_count": 1,
+        "ready_sample_count": 1,
+        "source_types": [
+          "failed_roi_sample"
+        ],
+        "label_status_breakdown": {
+          "weak": 1
+        },
+        "tags": [
+          "III_inclined",
+          "child_model",
+          "crown_overlap_conflict",
+          "failed_roi_sample",
+          "hill_middle",
+          "middle",
+          "shadow_topography",
+          "south"
+        ]
+      },
+      {
+        "cluster_id": "child_model:shadow_topography:terrain_shadow_confused",
+        "target_model_role": "child_model",
+        "failure_category": "terrain_shadow_confused",
+        "sample_count": 1,
+        "ready_sample_count": 1,
+        "source_types": [
+          "failed_roi_sample"
+        ],
+        "label_status_breakdown": {
+          "weak": 1
+        },
+        "tags": [
+          "IV_steep",
+          "child_model",
+          "failed_roi_sample",
+          "middle",
+          "plain",
+          "shadow_topography",
+          "southeast",
+          "terrain_shadow_confused"
+        ]
+      }
+    ],
+    "public_dataset_candidates": [],
+    "metadata": {
+      "policy": {
+        "min_failed_roi_samples": 5,
+        "min_ready_samples": 5,
+        "min_public_dataset_candidates": 0
+      }
+    }
+  }
+}

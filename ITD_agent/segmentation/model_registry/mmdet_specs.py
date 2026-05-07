@@ -80,16 +80,6 @@ MMDET_ALGORITHM_SPECS: dict[str, MMDetAlgorithmSpec] = {
         infer_config_file=f"{_MMDET_REPO_ROOT}/configs/htc/htc-without-semantic_r50_fpn_1x_coco.py",
         init_checkpoint=f"{_MMDET_REPO_ROOT}/checkpoints/htc_r50_fpn_1x_coco_20200317-7332cf16.pth",
     ),
-    "mmdet_htc_cb_swin_l_maskiou": MMDetAlgorithmSpec(
-        name="mmdet_htc_cb_swin_l_maskiou",
-        description="Hybrid Task Cascade with project-side CB-Swin-L backbone and MaskIoU head.",
-        runner_module="ITD_agent.segmentation.model_registry.runners.mmdet_htc_cb_swin_l_maskiou",
-        train_base_config="/home/xth/forest_agent_project/configs/mmdet_custom/htc_cb_swin_l_maskiou.py",
-        infer_config_file="/home/xth/forest_agent_project/configs/mmdet_custom/htc_cb_swin_l_maskiou.py",
-        init_checkpoint="",
-        train_loop_style="epoch_adamw",
-        extra_num_class_keys=("mask_iou_head",),
-    ),
     "mmdet_mask_scoring_rcnn": MMDetAlgorithmSpec(
         name="mmdet_mask_scoring_rcnn",
         description="Mask Scoring R-CNN via MMDetection official config/runtime.",

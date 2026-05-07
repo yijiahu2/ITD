@@ -35,7 +35,6 @@ segmentation_script: /home/xth/forest_agent_project/runtime_entrypoints/segmenta
 # 目前可选：
 # - mmdet_cascade_mask_rcnn
 # - mmdet_htc
-# - mmdet_htc_cb_swin_l_maskiou
 # - mmdet_mask_scoring_rcnn
 # - mmdet_mask2former
 # - maskdino_official

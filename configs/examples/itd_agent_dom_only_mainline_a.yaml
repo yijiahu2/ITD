@@ -1,0 +1,74 @@
+runtime:
+  experiment_name: forest_agent_mainline_a
+  run_name: dom_only_mainline_a
+  mainline_profile: A_DOM_ONLY
+  conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+  conda_env: tcd
+  work_dir: /home/xth/tcd/test_prediction
+
+inputs:
+  remote_sensing:
+    images:
+      - id: dom_rgb
+        path: /abs/path/dom.tif
+        sensor: aerial_rgb
+        resolution_m: 0.1
+        crs: EPSG:4547
+        bands: [R, G, B]
+        required: true
+  terrain:
+    dem: []
+  canopy:
+    chm: []
+  surface:
+    dsm: []
+  public_datasets:
+    datasets: []
+  industry_vectors:
+    vectors: []
+  survey_data:
+    tables: []
+  domain_knowledge:
+    items: []
+
+ITD_agent:
+  llm_gateway:
+    provider: doubao
+    enabled: true
+  planning:
+    adaptive_generation:
+      enabled: true
+      use_llm: true
+      parameter_search:
+        enabled: true
+        max_candidates: 3
+        max_pilots: 2
+        pilot_window_px: 1024
+    roi_extraction:
+      enabled: true
+      use_llm: true
+      max_rounds: 2
+      top_k: 3
+      min_problem_cases: 1
+      buffer_m: 5.0
+      strategy_mode: auto
+  data_processing:
+    semantic_prior:
+      script: /home/xth/forest_agent_project/runtime_entrypoints/semantic_prior_segformer.py
+  segmentation_models:
+    main_model:
+      name: legacy_cellpose_sam
+      script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+
+segmentation:
+  diam_list: "160,256,384"
+  tile: 2048
+  overlap: 256
+  tile_overlap: 0.35
+  bsize: 256
+  augment: true
+  iou_merge_thr: 0.28
+
+outputs:
+  root_base_dir: /tmp/itd_agent_outputs
+  cleanup_policy: minimal

@@ -30,13 +30,13 @@ from ITD_agent.planning.agent.local_refine import (
     make_bad_roi_gdf,
 )
 from ITD_agent.planning.agent.xiaoban_planner import build_group_plan_for_config, save_json
-from ITD_agent.data_processing.instance_ops import (
+from ITD_agent.data_processing.fusion.instance_ops import (
     dedupe_instances_by_overlap,
     filter_instances_to_ids_by_overlap,
     merge_split_instances_by_proximity,
     suppress_small_boundary_fragments,
 )
-from ITD_agent.data_processing.inventory.normalizer import prepare_spatial_context, summarize_xiaoban_terrain_classes
+from ITD_agent.data_processing.vector import prepare_spatial_context, summarize_xiaoban_terrain_classes
 from output_layer.reporting.experiment_report import build_experiment_report
 from tools.process_runner import run_streaming
 from tools.runtime_cache_client import run_semantic_prior_task_via_worker, run_segmentation_task_via_worker
@@ -52,12 +52,29 @@ EVAL_DETAILS_FILENAME = "evaluation_details.csv"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _reference_vector_path(cfg: dict[str, Any]) -> str | None:
+    return (
+        cfg.get("reference_vector_path")
+        or cfg.get("inventory_vector_path")
+        or cfg.get("xiaoban_shp")
+    )
+
+
+def _reference_id_field(cfg: dict[str, Any]) -> str | None:
+    return (
+        cfg.get("reference_id_field")
+        or cfg.get("inventory_id_field")
+        or cfg.get("xiaoban_id_field")
+    )
+
+
 def slim_group_summary(group_summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "group_id": group_summary.get("group_id"),
         "strategy_label": group_summary.get("strategy_label"),
         "planner_source": group_summary.get("planner_source"),
         "group_name": group_summary.get("group_name"),
+        "reference_unit_ids": group_summary.get("reference_unit_ids") or group_summary.get("xiaoban_ids"),
         "xiaoban_ids": group_summary.get("xiaoban_ids"),
         "params": group_summary.get("params"),
         "terrain_summary": group_summary.get("terrain_summary"),
@@ -119,14 +136,14 @@ def _prepare_grouped_runtime_config(config_path: str) -> str:
     context_dir = Path(cfg["metrics_json"]).resolve().parent / "grouped_spatial_context"
     ensure_dir(context_dir)
 
-    existing_xiaoban = cfg.get("xiaoban_shp")
+    existing_reference_vector = _reference_vector_path(cfg)
     if (
         cfg.get("spatial_context_summary_json")
         and Path(str(cfg["spatial_context_summary_json"])).exists()
-        and existing_xiaoban
-        and Path(str(existing_xiaoban)).exists()
-        and Path(str(existing_xiaoban)).suffix.lower() == ".gpkg"
-        and "context_xiaoban" in Path(str(existing_xiaoban)).name
+        and existing_reference_vector
+        and Path(str(existing_reference_vector)).exists()
+        and Path(str(existing_reference_vector)).suffix.lower() == ".gpkg"
+        and "context_xiaoban" in Path(str(existing_reference_vector)).name
         and cfg.get("dem_tif")
         and Path(str(cfg["dem_tif"])).exists()
     ):
@@ -135,9 +152,9 @@ def _prepare_grouped_runtime_config(config_path: str) -> str:
     context_result = prepare_spatial_context(
         dom_tif=cfg["input_image"],
         dem_tif=cfg.get("dem_tif"),
-        xiaoban_shp=cfg.get("xiaoban_shp"),
+        xiaoban_shp=_reference_vector_path(cfg),
         out_dir=context_dir,
-        xiaoban_id_field=cfg.get("xiaoban_id_field"),
+        xiaoban_id_field=_reference_id_field(cfg),
         tree_count_field=cfg.get("tree_count_field"),
         crown_field=cfg.get("crown_field"),
         closure_field=cfg.get("closure_field"),
@@ -147,7 +164,9 @@ def _prepare_grouped_runtime_config(config_path: str) -> str:
         plain_relief_threshold_m=float(cfg.get("plain_relief_threshold_m", 30.0)),
     )
 
-    cfg["xiaoban_shp"] = context_result.get("xiaoban_shp", cfg.get("xiaoban_shp"))
+    cfg["reference_vector_path"] = context_result.get("xiaoban_shp", _reference_vector_path(cfg))
+    cfg["inventory_vector_path"] = cfg["reference_vector_path"]
+    cfg["xiaoban_shp"] = cfg["reference_vector_path"]
     for key in ["dem_tif", "slope_tif", "aspect_tif", "landform_tif", "slope_position_tif"]:
         if context_result.get(key):
             cfg[key] = context_result[key]
@@ -319,8 +338,10 @@ def _run_group(
         "strategy_label": group.get("strategy_label"),
         "planner_source": group.get("planner_source"),
         "group_name": local_cfg["run_name"],
+        "reference_unit_ids": group["xiaoban_ids"],
         "xiaoban_ids": group["xiaoban_ids"],
         "params": group["params"],
+        "roi_reference_vector_path": roi_xiaoban,
         "roi_image": roi_image,
         "roi_xiaoban_shp": roi_xiaoban,
         "roi_dem_tif": terrain_roi.get("roi_dem_tif"),
@@ -356,14 +377,14 @@ def _run_final_evaluation(cfg: dict[str, Any], merged_shp: str, terrain_info: di
         merged_shp,
         "--patch_raster",
         cfg["input_image"],
-        "--xiaoban_shp",
-        cfg["xiaoban_shp"],
+        "--reference_vector",
+        _reference_vector_path(cfg),
         "--out_json",
         cfg["metrics_json"],
         "--out_csv",
         cfg["details_csv"],
         "--id_field",
-        cfg["xiaoban_id_field"],
+        _reference_id_field(cfg),
         "--tree_count_field",
         cfg["tree_count_field"],
         "--crown_field",
@@ -420,7 +441,7 @@ def run_grouped_experiment(config_path: str) -> dict[str, Any]:
     ensure_dir(group_root)
     cleanup_roots = get_cleanup_roots(cfg, extra_roots=[group_root])
 
-    plan_json = group_root / "xiaoban_plan.json"
+    plan_json = group_root / "reference_unit_plan.json"
     save_json(group_plan, plan_json)
 
     group_summaries: list[dict[str, Any]] = []
@@ -432,7 +453,7 @@ def run_grouped_experiment(config_path: str) -> dict[str, Any]:
             group=group,
             group_root=group_root,
             terrain_info=terrain_info,
-            xiaoban_id_field=cfg["xiaoban_id_field"],
+            xiaoban_id_field=_reference_id_field(cfg) or cfg["xiaoban_id_field"],
         )
         group_summaries.append(group_summary)
         if group_summary.get("filtered_group_inst_shp"):

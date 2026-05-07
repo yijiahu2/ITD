@@ -10,6 +10,13 @@ from typing import Any
 
 from openai import OpenAI
 
+from input_layer.mainline_profiles import (
+    A_DOM_ONLY,
+    B_DOM_DEM_CHM_KNOWLEDGE,
+    get_mainline_capabilities,
+    resolve_mainline_profile,
+)
+
 from .prompts import (
     _build_planning_prompt,
     _build_roi_candidate_selection_prompt,
@@ -24,6 +31,37 @@ DEFAULT_SYSTEM_PROMPT = (
     "总结成功策略与失败模式，并支持记忆更新和自主进化。"
     "你必须只输出合法 JSON，不要输出 markdown 或额外说明。"
 )
+
+
+def build_dynamic_system_prompt(
+    *,
+    runtime_cfg: dict[str, Any] | None = None,
+    task_type: str | None = None,
+    base_prompt: str = DEFAULT_SYSTEM_PROMPT,
+) -> str:
+    profile = resolve_mainline_profile(runtime_cfg or {})
+    capabilities = (runtime_cfg or {}).get("_mainline_capabilities") or get_mainline_capabilities(profile)
+    lines = [base_prompt, "", f"当前主线 profile: {profile}。", f"当前任务类型: {task_type or 'unknown'}。"]
+    if profile == A_DOM_ONLY:
+        lines.extend(
+            [
+                "主线 A 是完整智能体全流程的 DOM-only 模式，不是简化流程。",
+                "可使用 DOM-derived 证据、公开/自制 COCO 数据集摘要、分割残差、ROI 诊断、经验记忆和微调池上下文做决策。",
+                "禁止引用 DEM/CHM/DSM、领域知识、规则或 B-only 记忆作为决策证据。",
+                "所有建议必须服务于公平 DOM-only SOTA 对比和智能体泛化能力验证。",
+            ]
+        )
+    elif profile == B_DOM_DEM_CHM_KNOWLEDGE:
+        lines.extend(
+            [
+                "主线 B 继承主线 A 的同一套完整智能体流程，并额外启用 DEM 和 CHM。",
+                "DEM/CHM 可用于地形、高度、ROI、后处理、可信度增强和树高结构属性提取决策。",
+                "公开/自制 COCO 数据集、经验记忆和微调池上下文是 A/B 共享能力。",
+                "领域知识、规则等外部知识默认关闭；除非运行配置显式开启，不得作为决策证据或默认模型 tensor 输入。",
+            ]
+        )
+    lines.append(f"可用能力: {json.dumps(capabilities, ensure_ascii=False, sort_keys=True)}")
+    return "\n".join(lines)
 
 
 _EXPORT_RE = re.compile(r"^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -269,7 +307,7 @@ def request_planning_decision(
             template_cfg=template_cfg,
             scheduler_context=scheduler_context,
         ),
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        system_prompt=build_dynamic_system_prompt(runtime_cfg=runtime_cfg, task_type=f"plan_{planning_stage}_config"),
         runtime_cfg=runtime_cfg,
         use_llm=use_llm,
     )
@@ -288,7 +326,7 @@ def request_roi_decision(
             roi_assessment=roi_assessment,
             metrics=metrics,
         ),
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        system_prompt=build_dynamic_system_prompt(runtime_cfg=runtime_cfg, task_type="decide_roi_continuation"),
         runtime_cfg=runtime_cfg,
         use_llm=use_llm,
     )
@@ -309,7 +347,7 @@ def request_roi_candidate_selection(
             metrics=metrics,
             scene_analysis=scene_analysis,
         ),
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        system_prompt=build_dynamic_system_prompt(runtime_cfg=runtime_cfg, task_type="select_roi_candidates"),
         runtime_cfg=runtime_cfg,
         use_llm=use_llm,
     )
@@ -330,7 +368,7 @@ def request_run_retrospective(
             memory_context=memory_context,
             finetune_context=finetune_context,
         ),
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        system_prompt=build_dynamic_system_prompt(runtime_cfg=runtime_cfg, task_type="summarize_run_retrospective"),
         runtime_cfg=runtime_cfg,
         use_llm=use_llm,
     )

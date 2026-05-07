@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from input_layer.adapters import build_input_manifest
 from ITD_agent.data_processing.height import build_height_raster_profiles
-from ITD_agent.data_processing.imagery.priors import build_image_profiles
+from ITD_agent.data_processing.remote_sensing.profiles import build_image_profiles
 
 
 def _write_raster(path: Path, data: np.ndarray, resolution: float = 1.0) -> None:

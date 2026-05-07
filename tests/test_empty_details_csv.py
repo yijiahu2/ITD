@@ -18,4 +18,4 @@ def test_summarize_details_csv_handles_empty_csv_file(tmp_path: Path) -> None:
 
     assert summary["exists"] is True
     assert summary["num_units"] == 0
-    assert summary["top_k_xiaoban"] == []
+    assert summary["top_k_reference_units"] == []

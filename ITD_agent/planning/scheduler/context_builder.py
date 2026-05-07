@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from input_layer.mainline_profiles import get_mainline_capabilities, resolve_mainline_profile
+
 from ITD_agent.evaluation_analysis.detail_ranker import summarize_details_csv
 from ITD_agent.finetune_pool.query import load_finetune_pool_snapshot, load_recent_failed_cases
 from ITD_agent.memory_store.query import (
@@ -19,6 +21,12 @@ def _load_json(path: str | Path) -> dict[str, Any]:
 
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _input_manifest_summary(data_processing_summary: dict[str, Any]) -> dict[str, Any]:
+    metadata = data_processing_summary.get("metadata") or {}
+    summary = metadata.get("input_manifest_summary") or {}
+    return summary if isinstance(summary, dict) else {}
 
 
 def _safe_float(value: Any) -> float | None:
@@ -239,6 +247,13 @@ def build_scheduler_context(
     recent_success_limit: int = 10,
     recent_failure_limit: int = 10,
 ) -> dict[str, Any]:
+    mainline_profile = resolve_mainline_profile(runtime_cfg)
+    capabilities = runtime_cfg.get("_mainline_capabilities") or get_mainline_capabilities(mainline_profile)
+    allow_dem = bool(capabilities.get("allow_dem"))
+    allow_external_knowledge = bool(capabilities.get("allow_external_knowledge"))
+    allow_public_datasets = bool(capabilities.get("allow_public_datasets"))
+    allow_memory_context = bool(capabilities.get("allow_memory_context"))
+    allow_finetune_pool_context = bool(capabilities.get("allow_finetune_pool_context"))
     metrics: dict[str, Any] = {}
     if metrics_json and Path(metrics_json).exists():
         metrics = _load_json(metrics_json)
@@ -251,14 +266,20 @@ def build_scheduler_context(
     if details_csv and Path(details_csv).exists():
         details_summary = summarize_details_csv(details_csv, top_k=10)
 
+    scene_profile = infer_scene_profile_from_runtime(runtime_cfg)
+    terrain_analysis = ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {}
+    data_processing_summary = runtime_cfg.get("_data_processing_summary") or {}
+
     return {
-        "scene_profile": infer_scene_profile_from_runtime(runtime_cfg),
+        "mainline_profile": mainline_profile,
+        "mainline_capabilities": capabilities,
+        "scene_profile": scene_profile,
         "run_name": runtime_cfg.get("run_name"),
         "planning_stage": runtime_cfg.get("_planning_stage"),
         "pipeline": runtime_cfg.get("pipeline") or {},
         "template_runtime": {
             "input_image": runtime_cfg.get("input_image"),
-            "xiaoban_shp": runtime_cfg.get("xiaoban_shp"),
+            "reference_vector_path": runtime_cfg.get("reference_vector_path") or runtime_cfg.get("inventory_vector_path") or runtime_cfg.get("xiaoban_shp"),
             "dem_tif": runtime_cfg.get("dem_tif"),
         },
         "current_parameters": {
@@ -276,24 +297,24 @@ def build_scheduler_context(
         "input_assessment": runtime_cfg.get("_input_assessment") or {},
         "image_texture_analysis": ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("image_texture_analysis") or {},
         "image_quality_analysis": ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("image_quality_analysis") or {},
-        "terrain_analysis": ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {},
-        "global_terrain_background": ((((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {}).get("global_background") or {}),
-        "dom_terrain_context": ((((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {}).get("dom_context") or {}),
-        "data_processing_summary": runtime_cfg.get("_data_processing_summary") or {},
+        "terrain_analysis": terrain_analysis if allow_dem else {},
+        "global_terrain_background": (terrain_analysis.get("global_background") or {}) if allow_dem else {},
+        "dom_terrain_context": (terrain_analysis.get("dom_context") or {}) if allow_dem else {},
+        "data_processing_summary": data_processing_summary,
         "roi_assessment": runtime_cfg.get("_roi_assessment") or {},
         "previous_round_summary": runtime_cfg.get("_previous_round_summary") or {},
         "input_manifest": runtime_cfg.get("_input_manifest") or {},
         "segmentation_models": ((runtime_cfg.get("ITD_agent") or {}).get("segmentation_models") or {}),
         "segmentation_parameter_recommendation": _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg),
-        "knowledge_profiles": (runtime_cfg.get("_data_processing_summary") or {}).get("knowledge_profiles") or [],
-        "public_dataset_profiles": (runtime_cfg.get("_data_processing_summary") or {}).get("public_dataset_profiles") or [],
-        "memory_store_context": load_recent_success_strategies(limit=recent_success_limit),
-        "failure_pattern_context": load_recent_failure_patterns(limit=recent_failure_limit),
-        "execution_trace_context": load_recent_execution_traces(limit=recent_success_limit),
+        "knowledge_profiles": (_input_manifest_summary(data_processing_summary).get("domain_knowledge_items") or []) if allow_external_knowledge else [],
+        "public_dataset_profiles": (_input_manifest_summary(data_processing_summary).get("public_datasets") or []) if allow_public_datasets else [],
+        "memory_store_context": load_recent_success_strategies(limit=recent_success_limit) if allow_memory_context else [],
+        "failure_pattern_context": load_recent_failure_patterns(limit=recent_failure_limit) if allow_memory_context else [],
+        "execution_trace_context": load_recent_execution_traces(limit=recent_success_limit) if allow_memory_context else [],
         "scene_similar_memory_context": load_scene_similar_memories(
-            scene_profile=infer_scene_profile_from_runtime(runtime_cfg),
+            scene_profile=scene_profile,
             limit=min(recent_success_limit, 5),
-        ),
-        "finetune_pool_context": load_finetune_pool_snapshot(),
-        "finetune_pool_recent_cases": load_recent_failed_cases(limit=recent_failure_limit),
+        ) if allow_memory_context else [],
+        "finetune_pool_context": load_finetune_pool_snapshot() if allow_finetune_pool_context else [],
+        "finetune_pool_recent_cases": load_recent_failed_cases(limit=recent_failure_limit) if allow_finetune_pool_context else [],
     }

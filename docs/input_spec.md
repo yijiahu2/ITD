@@ -2,6 +2,31 @@
 
 `ITD_agent` 的输入层现在按 `Input Manifest + Validator + Preparer + Registry` 组织。
 
+## Mainline Profile
+
+项目只有一套统一智能体 pipeline，主线 A/B 由 `runtime.mainline_profile` 控制输入能力，不拆分流程。
+
+```yaml
+runtime:
+  mainline_profile: A_DOM_ONLY
+```
+
+支持的标准 profile：
+
+- `A_DOM_ONLY`
+  - 在线观测输入：`DOM`
+  - DEM / CHM / DSM：关闭
+  - 公开数据集、自制 COCO 数据集、经验记忆、微调池：启用
+  - 小班、调查表、领域知识：默认关闭，不作为可用决策证据
+  - 用途：公平对比 DOM-only SOTA，验证智能体框架价值
+- `B_DOM_DEM_CHM_KNOWLEDGE`
+  - 在线观测输入：`DOM + DEM + CHM`
+  - 公开数据集、自制 COCO 数据集、经验记忆、微调池：启用
+  - 外部知识层：默认关闭，保留小班、调查表、领域知识接口
+  - 用途：在 A 的同一套流程基础上提升分割精度，并输出树高、冠高、结构信息
+
+如果旧配置没有显式声明 `mainline_profile`，输入层会按实际出现的 DEM/CHM 或外部知识自动推断为 B；公开数据集和 COCO 数据集不会触发 B profile。新实验建议显式声明，避免 benchmark 口径不清。
+
 ## Directory Convention
 
 - `raw_inputs/`
@@ -145,15 +170,21 @@ inputs:
 
 ## Recommended Core Inputs
 
-当前推荐的核心在线输入是：
+当前推荐的核心在线输入按 profile 区分：
 
-- `DOM`
-- `DEM`
-- `CHM`
-- `public_datasets` 作为离线知识与训练资源
+- `A_DOM_ONLY`: `DOM`
+- `B_DOM_DEM_CHM_KNOWLEDGE`: `DOM + DEM + CHM`
 
-`IndustryVectors / SurveyTables` 默认为可选增强输入。
-当提供时，仍沿用当前 `field_mapping` 形式接入，但不再作为默认主流程必需项。
+`PublicDatasets` 与自制 COCO 数据集属于 A/B 共享训练、验证、推理数据能力，不属于 A/B 差异项。
+
+`IndustryVectors / SurveyTables / DomainKnowledge` 属于可选外部知识层。A profile 默认关闭且不作为可用决策证据；B profile 保留接口但默认关闭，后续显式开启时可用于动态系统提示词、训练决策、路由决策、样本筛选和后处理约束；不作为默认模型 tensor 输入。
+
+`IndustryVectors / SurveyTables` 当提供时仍沿用当前 `field_mapping` 形式接入，但不再作为默认主流程必需项。
+
+## Output Profile
+
+- A 输出标准树冠实例、树木点、分割评估指标、ROI/调度/记忆记录。
+- B 输出 A 的全部字段，并在 CHM 可用时增加实例级高度结构属性：`tree_height_p95`、`tree_height_max`、`crown_height_mean`、`crown_height_std`、`height_gradient`、`structure_tag`。
 
 ## Runtime Output
 

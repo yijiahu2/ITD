@@ -25,14 +25,14 @@ def summarize_details_csv(
 ) -> dict[str, Any]:
     path = Path(details_csv_path)
     if not path.exists():
-        return {"exists": False, "top_k_xiaoban": []}
+        return {"exists": False, "top_k_reference_units": []}
 
     try:
         raw_df = pd.read_csv(path)
     except EmptyDataError:
-        return {"exists": True, "num_units": 0, "top_k_xiaoban": []}
+        return {"exists": True, "num_units": 0, "top_k_reference_units": []}
     if raw_df.empty:
-        return {"exists": True, "num_units": 0, "top_k_xiaoban": []}
+        return {"exists": True, "num_units": 0, "top_k_reference_units": []}
 
     if cfg is not None:
         df, _, _, _ = normalize_details_df(raw_df, cfg)
@@ -98,7 +98,7 @@ def summarize_details_csv(
     for _, row in ranked.head(max(int(top_k), 0)).iterrows():
         top_rows.append(
             {
-                "xiaoban_id": str(row.get("xiaoban_id") or row.get("XBH")),
+                "reference_unit_id": str(row.get("reference_unit_id") or row.get("xiaoban_id") or row.get("XBH")),
                 "pred_tree_count": _safe_float(row.get("pred_tree_count")),
                 "expected_tree_count": _safe_float(row.get("expected_tree_count")),
                 "tree_count_error_abs": _safe_float(row.get("tree_count_error_abs")),
@@ -124,5 +124,5 @@ def summarize_details_csv(
     return {
         "exists": True,
         "num_units": int(len(df)),
-        "top_k_xiaoban": top_rows,
+        "top_k_reference_units": top_rows,
     }

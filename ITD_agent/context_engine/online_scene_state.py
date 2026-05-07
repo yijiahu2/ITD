@@ -88,6 +88,13 @@ def _build_public_dataset_prior(public_profiles: list[dict[str, Any]]) -> dict[s
     }
 
 
+def _public_dataset_profiles_from_summary(data_processing_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = data_processing_summary.get("metadata") or {}
+    manifest_summary = metadata.get("input_manifest_summary") or {}
+    profiles = manifest_summary.get("public_datasets")
+    return profiles if isinstance(profiles, list) else []
+
+
 def build_online_scene_state(
     *,
     runtime_cfg: dict[str, Any],
@@ -99,7 +106,7 @@ def build_online_scene_state(
     image_profile = image_profiles[0] if image_profiles else {}
     texture = image_profile.get("texture_summary") or {}
     quality = (image_profile.get("quality_summary") or {}).get("quality_metrics") or {}
-    public_profiles = data_processing_summary.get("public_dataset_profiles") or []
+    public_profiles = _public_dataset_profiles_from_summary(data_processing_summary)
 
     height_profiles = data_processing_summary.get("height_raster_profiles") or []
     chm_profile = next((item for item in height_profiles if item.get("role") == "chm"), None)

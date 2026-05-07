@@ -12,7 +12,7 @@ import pandas as pd
 
 from ITD_agent.planning.agent.config_builder import load_yaml, save_yaml
 from ITD_agent.planning.agent.xiaoban_prompt_builder import build_group_param_prompt
-from ITD_agent.data_processing.inventory.normalizer import standardize_inventory_crown_width
+from ITD_agent.data_processing.vector import standardize_inventory_crown_width
 
 SAFE_PARAM_SPACE = {
     "diam_list": ["96,160,256", "96,192,320", "128,192,320", "128,256,320"],

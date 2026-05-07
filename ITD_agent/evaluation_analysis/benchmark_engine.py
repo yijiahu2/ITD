@@ -115,6 +115,19 @@ def _compute_area_r2(tp_rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _mean_iou_matched(tp_rows: list[dict[str, Any]]) -> float | None:
+    if not tp_rows:
+        return None
+    return float(np.mean([float(row["best_iou"]) for row in tp_rows]))
+
+
+def _f1_score(precision: float, recall: float) -> float:
+    denominator = precision + recall
+    if denominator <= 0:
+        return 0.0
+    return float(2.0 * precision * recall / denominator)
+
+
 def _compute_pr_ap(candidate_rows: list[dict[str, Any]], total_gt: int, iou_thr: float) -> dict[str, Any]:
     matched_gt: set[int] = set()
     matches: list[dict[str, Any]] = []
@@ -141,7 +154,17 @@ def _compute_pr_ap(candidate_rows: list[dict[str, Any]], total_gt: int, iou_thr:
             }
         )
     if not matches:
-        return {"ap": 0.0, "precision": 0.0, "recall": 0.0, "tp": 0, "fp": 0, "fn": int(total_gt), "crown_area": _compute_area_r2([])}
+        return {
+            "ap": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "tp": 0,
+            "fp": 0,
+            "fn": int(total_gt),
+            "crown_area": _compute_area_r2([]),
+            "tp_rows": [],
+            "mean_iou_matched": None,
+        }
     tp = np.array([1 if row["is_tp"] else 0 for row in matches], dtype=np.int32)
     fp = np.array([1 if row["is_fp"] else 0 for row in matches], dtype=np.int32)
     tp_cum = np.cumsum(tp)
@@ -151,6 +174,7 @@ def _compute_pr_ap(candidate_rows: list[dict[str, Any]], total_gt: int, iou_thr:
     final_tp = int(tp_cum[-1]) if tp_cum.size else 0
     final_fp = int(fp_cum[-1]) if fp_cum.size else 0
     final_fn = int(max(total_gt - final_tp, 0))
+    tp_rows = [row for row in matches if row["is_tp"]]
     return {
         "ap": float(_ap_from_pr(recalls, precisions)),
         "precision": float(final_tp / max(final_tp + final_fp, 1)),
@@ -158,7 +182,47 @@ def _compute_pr_ap(candidate_rows: list[dict[str, Any]], total_gt: int, iou_thr:
         "tp": final_tp,
         "fp": final_fp,
         "fn": final_fn,
-        "crown_area": _compute_area_r2([row for row in matches if row["is_tp"]]),
+        "crown_area": _compute_area_r2(tp_rows),
+        "tp_rows": tp_rows,
+        "mean_iou_matched": _mean_iou_matched(tp_rows),
+    }
+
+
+def _compute_error_decomposition(
+    *,
+    candidate_rows: list[dict[str, Any]],
+    pred_count: int,
+    gt_count: int,
+    iou_050: dict[str, Any],
+) -> dict[str, Any]:
+    pred_multi_gt = 0
+    gt_multi_pred: dict[int, int] = {}
+    for pred in candidate_rows:
+        valid_matches = [item for item in pred["matches"] if float(item["iou"]) >= 0.10]
+        unique_gt = {int(item["gt_idx"]) for item in valid_matches}
+        if len(unique_gt) > 1:
+            pred_multi_gt += 1
+        for item in valid_matches:
+            gt_idx = int(item["gt_idx"])
+            gt_multi_pred[gt_idx] = int(gt_multi_pred.get(gt_idx, 0)) + 1
+
+    under_segmentation_score = float(pred_multi_gt / max(pred_count, 1))
+    over_segmentation_score = float(sum(1 for count in gt_multi_pred.values() if count > 1) / max(gt_count, 1))
+    miss_detection_score = float(iou_050["fn"] / max(gt_count, 1))
+    false_detection_score = float(iou_050["fp"] / max(pred_count, 1))
+    sorted_scores = sorted(
+        [under_segmentation_score, over_segmentation_score, miss_detection_score, false_detection_score],
+        reverse=True,
+    )
+    top = sorted_scores[0] if sorted_scores else 0.0
+    second = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
+    failure_confidence = float(min(max(top + ((top - second) * 0.35), 0.0), 1.0))
+    return {
+        "under_segmentation_score": under_segmentation_score,
+        "over_segmentation_score": over_segmentation_score,
+        "miss_detection_score": miss_detection_score,
+        "false_detection_score": false_detection_score,
+        "failure_confidence": failure_confidence,
     }
 
 
@@ -176,30 +240,33 @@ def evaluate_benchmark_vector_result(
     resolved_score_field, score_source = _detect_score_field(pred_gdf, configured=score_field)
     candidate_rows = _build_candidate_rows(pred_gdf, gt_gdf, resolved_score_field)
     total_gt = int(len(gt_gdf))
+    total_pred = int(len(pred_gdf))
     iou_050 = _compute_pr_ap(candidate_rows, total_gt=total_gt, iou_thr=0.50)
     iou_075 = _compute_pr_ap(candidate_rows, total_gt=total_gt, iou_thr=0.75)
+    error_decomposition = _compute_error_decomposition(
+        candidate_rows=candidate_rows,
+        pred_count=total_pred,
+        gt_count=total_gt,
+        iou_050=iou_050,
+    )
     return {
         "evaluation_mode": "benchmark",
         "prediction_file": str(pred_shp),
         "ground_truth_file": str(gt_shp),
-        "num_predictions": int(len(pred_gdf)),
-        "num_ground_truth": int(len(gt_gdf)),
+        "num_predictions": total_pred,
+        "num_ground_truth": total_gt,
         "score_field": resolved_score_field,
         "score_source": score_source,
         "precision": iou_050["precision"],
         "recall": iou_050["recall"],
-        "precision_percent": float(iou_050["precision"] * 100.0),
-        "recall_percent": float(iou_050["recall"] * 100.0),
         "ap50": iou_050["ap"],
         "ap75": iou_075["ap"],
-        "precision50": iou_050["precision"],
-        "recall50": iou_050["recall"],
-        "precision50_percent": float(iou_050["precision"] * 100.0),
-        "recall50_percent": float(iou_050["recall"] * 100.0),
-        "precision75": iou_075["precision"],
-        "recall75": iou_075["recall"],
-        "precision75_percent": float(iou_075["precision"] * 100.0),
-        "recall75_percent": float(iou_075["recall"] * 100.0),
+        "f1_score50": _f1_score(iou_050["precision"], iou_050["recall"]),
+        "mean_iou_matched": iou_050["mean_iou_matched"],
+        "iou_0_75": {
+            "precision": iou_075["precision"],
+            "recall": iou_075["recall"],
+        },
         "tp50": iou_050["tp"],
         "fp50": iou_050["fp"],
         "fn50": iou_050["fn"],
@@ -212,4 +279,5 @@ def evaluate_benchmark_vector_result(
         "r2": iou_050["crown_area"]["r2"],
         "crown_area_iou_0_50": iou_050["crown_area"],
         "crown_area_iou_0_75": iou_075["crown_area"],
+        "error_decomposition": error_decomposition,
     }

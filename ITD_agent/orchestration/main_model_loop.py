@@ -58,7 +58,7 @@ def build_main_model_loop_trace(
             "assessment_mode": main_eval_info.get("assessment_mode"),
             "quality_score": main_eval_info.get("quality_score"),
             "online_quality": main_eval_info.get("online_quality") or {},
-            "reference_metrics_available": bool(main_eval_info.get("metrics")),
+            "reference_inventory_metrics_available": bool(main_eval_info.get("metrics")),
         },
     }
 

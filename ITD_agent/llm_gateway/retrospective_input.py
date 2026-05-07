@@ -23,7 +23,10 @@ def _safe_float(value: Any) -> float | None:
 
 
 def _compact_input_assessment_summary(run_summary: dict[str, Any]) -> dict[str, Any]:
-    assessment = ((run_summary.get("evaluation_analysis") or {}).get("input_assessment") or {})
+    assessment = (
+        ((run_summary.get("data_processing") or {}).get("input_assessment") or {})
+        or ((run_summary.get("evaluation_analysis") or {}).get("input_assessment") or {})
+    )
     scene_analysis = assessment.get("scene_analysis") or {}
     return {
         "readiness_score": assessment.get("readiness_score"),
@@ -39,7 +42,10 @@ def _compact_input_assessment_summary(run_summary: dict[str, Any]) -> dict[str, 
 
 
 def _compact_scene_profile(run_summary: dict[str, Any]) -> dict[str, Any]:
-    input_assessment = ((run_summary.get("evaluation_analysis") or {}).get("input_assessment") or {})
+    input_assessment = (
+        ((run_summary.get("data_processing") or {}).get("input_assessment") or {})
+        or ((run_summary.get("evaluation_analysis") or {}).get("input_assessment") or {})
+    )
     scene_analysis = input_assessment.get("scene_analysis") or {}
     texture = scene_analysis.get("image_texture_analysis") or {}
     quality = scene_analysis.get("image_quality_analysis") or {}
@@ -86,7 +92,7 @@ def _compact_top_problem_cases(run_summary: dict[str, Any], limit: int = 5) -> l
     for case in cases:
         compacted.append(
             {
-                "xiaoban_id": case.get("xiaoban_id"),
+                "reference_unit_id": case.get("reference_unit_id"),
                 "error_score": case.get("error_score"),
                 "tree_count_error_abs": case.get("tree_count_error_abs"),
                 "mean_crown_width_error_abs": case.get("mean_crown_width_error_abs"),
@@ -167,7 +173,7 @@ def _compact_finetune_pool_digest(finetune_context: list[dict[str, Any]] | None,
                 "sample_id": item.get("sample_id"),
                 "failure_category": item.get("failure_category"),
                 "target_model_role": item.get("target_model_role"),
-                "xiaoban_id": ((item.get("metadata") or {}).get("xiaoban_id")),
+                "reference_unit_id": ((item.get("metadata") or {}).get("reference_unit_id")),
             }
         )
     return {

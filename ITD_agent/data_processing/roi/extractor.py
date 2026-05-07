@@ -15,7 +15,7 @@ from rasterio.warp import reproject
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
-from ITD_agent.data_processing.inventory.normalizer import (
+from ITD_agent.data_processing.vector import (
     crop_raster_to_geometry,
     enrich_xiaoban_clip_fields,
     standardize_inventory_crown_width,
@@ -892,6 +892,21 @@ def make_bad_roi_gdf(
     )
 
 
+def make_bad_reference_unit_roi_gdf(
+    *,
+    reference_vector_path: str,
+    reference_id_field: str,
+    bad_reference_unit_ids: list[str],
+    buffer_m: float = 5.0,
+) -> gpd.GeoDataFrame:
+    return make_bad_roi_gdf(
+        xiaoban_shp=reference_vector_path,
+        xiaoban_id_field=reference_id_field,
+        bad_ids=bad_reference_unit_ids,
+        buffer_m=buffer_m,
+    )
+
+
 def clip_xiaoban_to_geometry_with_fields(
     *,
     src_vector: str,
@@ -935,6 +950,33 @@ def clip_xiaoban_to_geometry_with_fields(
     out_path = _ensure_parent(out_vector)
     clipped.to_file(out_path)
     return str(out_path)
+
+
+def clip_reference_vector_to_geometry_with_fields(
+    *,
+    src_vector: str,
+    geom_gdf: gpd.GeoDataFrame,
+    out_vector: str,
+    reference_id_field: str,
+    allowed_ids: list[str] | None = None,
+    tree_count_field: str | None = None,
+    crown_field: str | None = None,
+    closure_field: str | None = None,
+    area_ha_field: str | None = None,
+    density_field: str | None = None,
+) -> str:
+    return clip_xiaoban_to_geometry_with_fields(
+        src_vector=src_vector,
+        geom_gdf=geom_gdf,
+        out_vector=out_vector,
+        xiaoban_id_field=reference_id_field,
+        allowed_ids=allowed_ids,
+        tree_count_field=tree_count_field,
+        crown_field=crown_field,
+        closure_field=closure_field,
+        area_ha_field=area_ha_field,
+        density_field=density_field,
+    )
 
 
 def crop_roi_terrain_bundle(
@@ -1045,6 +1087,11 @@ def prepare_roi_refinement_inputs(
 
     summary = {
         "group_name": group_name,
+        "reference_id_field": base_cfg["xiaoban_id_field"],
+        "target_reference_unit_ids": target_ids,
+        "roi_reference_unit_ids_in_output": output_ids,
+        "roi_reference_vector_gpkg": roi_xiaoban,
+        "target_reference_unit_area_m2": float(target_union.area) if target_union is not None else None,
         "xiaoban_id_field": base_cfg["xiaoban_id_field"],
         "target_xiaoban_ids": target_ids,
         "roi_xiaoban_ids_in_output": output_ids,

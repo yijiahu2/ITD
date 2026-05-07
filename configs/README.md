@@ -14,8 +14,6 @@
   benchmark 与最终评估模板。
 - `expert_taxonomy/`
   专家族、领域标签和模板路由定义，供 `ITD_agent/planning/scheduler/expert_taxonomy.py` 读取。
-- `mmdet_custom/`
-  外部训练框架的基础配置片段。
 - `generated/`
   历史/人工保留的实验配置快照。当前运行期新生成配置不应写回这里。
 

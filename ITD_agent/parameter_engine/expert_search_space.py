@@ -36,21 +36,6 @@ _SPACES: dict[str, dict[str, Any]] = {
         "deployment_params": deepcopy(_COMMON_DEPLOYMENT_PARAMS),
         "best_for": ["dense_adhesion", "shadow_topography"],
     },
-    "mmdet_htc_cb_swin_l_maskiou": {
-        "model_family": "mmdet_htc_cb_swin_l_maskiou",
-        "body_params": {
-            "backbone": {"fixed": "CB-Swin-L"},
-            "cascade_stages": {"fixed": 3},
-            "mask_iou_head": {"fixed": True},
-        },
-        "decision_params": {
-            **_COMMON_DECISION_PARAMS,
-            "mask_thr_binary": {"type": "float", "range": [0.35, 0.65]},
-            "mask_iou_score_weight": {"type": "float", "range": [0.0, 1.0]},
-        },
-        "deployment_params": deepcopy(_COMMON_DEPLOYMENT_PARAMS),
-        "best_for": ["dense_adhesion", "boundary_calibration", "shadow_topography"],
-    },
     "mmdet_cascade_mask_rcnn": {
         "model_family": "mmdet_cascade_mask_rcnn",
         "body_params": {

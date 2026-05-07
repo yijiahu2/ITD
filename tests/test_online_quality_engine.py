@@ -58,6 +58,7 @@ def test_evaluate_online_quality_with_semantic_and_chm(tmp_path: Path) -> None:
 
     semantic = result["metrics"]["semantic_instance_consistency"]
     geometry = result["metrics"]["geometry_plausibility"]
+    geometry_diag = result["metrics"]["geometry_diagnostics"]
 
     assert semantic["available"] is True
     assert semantic["coverage_ratio"] == pytest.approx(1.0)
@@ -71,4 +72,9 @@ def test_evaluate_online_quality_with_semantic_and_chm(tmp_path: Path) -> None:
     assert geometry["max_instance_area_share"] == pytest.approx(0.5)
     assert geometry["top5_instance_area_share"] == pytest.approx(1.0)
     assert geometry["small_fragment_ratio_lt_4m2"] == pytest.approx(0.0)
+    assert geometry_diag["pred_instance_count"] == 2
+    assert geometry_diag["valid_instance_ratio"] == pytest.approx(1.0)
+    assert geometry_diag["small_fragment_ratio"] == pytest.approx(0.0)
+    assert geometry_diag["semantic_instance_consistency"] == pytest.approx(1.0)
+    assert geometry_diag["semantic_instance_conflict_flag"] is False
     assert result["quality_score"] is not None

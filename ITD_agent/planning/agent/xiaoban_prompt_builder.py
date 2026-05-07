@@ -16,9 +16,9 @@ def build_group_param_prompt(
             {
                 "group_id": group["group_id"],
                 "strategy_label": group.get("strategy_label"),
-                "num_xiaoban": group.get("num_xiaoban"),
-                "xiaoban_ids_preview": (group.get("xiaoban_ids") or [])[:6],
-                "xiaoban_count": len(group.get("xiaoban_ids") or []),
+                "num_reference_units": group.get("num_reference_units") or group.get("num_xiaoban"),
+                "reference_unit_ids_preview": (group.get("reference_unit_ids") or group.get("xiaoban_ids") or [])[:6],
+                "reference_unit_count": len(group.get("reference_unit_ids") or group.get("xiaoban_ids") or []),
                 "dominant_terrain": group.get("dominant_terrain"),
                 "weighted_inventory": group.get("weighted_inventory"),
                 "current_params": group.get("params"),
@@ -27,7 +27,7 @@ def build_group_param_prompt(
 
     return f"""
 你是森林单木分割分区规划智能体。
-目标：基于不同小班组的 inventory + terrain 特征，为每个 group 选择更合适的首轮分割参数。
+目标：基于不同参考单元组的 inventory + terrain 特征，为每个 group 选择更合适的首轮分割参数。
 
 运行元信息：
 {json.dumps(run_meta, ensure_ascii=False, indent=2)}
@@ -38,7 +38,7 @@ def build_group_param_prompt(
 空间上下文摘要：
 {json.dumps(spatial_context or {}, ensure_ascii=False, indent=2)}
 
-待分析的小班组：
+待分析的参考单元组：
 {json.dumps(compact_groups, ensure_ascii=False, indent=2)}
 
 可调参数范围：
@@ -54,7 +54,7 @@ def build_group_param_prompt(
 1. 必须覆盖每个 group_id
 2. 只能从给定范围中选值
 3. bsize 固定为 256
-4. 山地、陡坡、高密度、郁闭度高的小班组，优先考虑更稳健的 overlap / tile_overlap
+4. 山地、陡坡、高密度、郁闭度高的参考单元组，优先考虑更稳健的 overlap / tile_overlap
 5. 不要输出 markdown，不要输出解释性文字
 
 请严格输出 JSON，格式如下：

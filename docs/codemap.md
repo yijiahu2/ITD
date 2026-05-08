@@ -1,6 +1,6 @@
 # forest_agent_project Codemap
 
-Last synced: 2026-04-13
+Last synced: 2026-05-07
 
 This codemap reflects the current repository layout. It is the first document to update when code structure changes.
 
@@ -26,7 +26,7 @@ This codemap reflects the current repository layout. It is the first document to
 - `ITD_agent/data_processing/`
   Owns input profiling, image/terrain/inventory/knowledge/public-dataset summaries, processing request records, ROI data preparation, and instance post-processing.
 - `ITD_agent/evaluation_analysis/`
-  Owns input, main-model, ROI, child-model, finetune-effect, reference-quality, and final assessment logic.
+  Owns main-model, ROI, child-model, finetune-effect, reference-quality, benchmark, and final assessment logic. It consumes diagnostics from `data_processing/fusion/diagnostics.py`, owns metric formulas, rule-based decisions, and derived quality/error summaries, but does not generate ROI candidates or issue LLM decisions itself.
 - `ITD_agent/llm_gateway/`
   Owns LLM gateway config, prompt builders, structured JSON calls, ROI decisions, planning advice, and run-retrospective input compaction.
 - `ITD_agent/planning/`
@@ -104,3 +104,12 @@ The current normalized config path accepts these top-level blocks:
 - Persistent outputs are rooted at `persistent_output_dir` when temp runtime is enabled.
 - Final deliverables are published under `final_outputs/`.
 - Minimal retention may remove stage directories while keeping compact summary and final deliverables.
+
+## Evaluation Analysis Notes
+
+- `ITD_agent/evaluation_analysis/evaluator.py` is the unified facade for main-model, ROI, child-model, final, and finetune-effect assessment calls.
+- `ITD_agent/evaluation_analysis/reference_quality_engine.py` owns `reference_error_score` / `reference_quality_score` and the score breakdown for inventory-aligned evaluation.
+- `ITD_agent/evaluation_analysis/online_quality_engine.py` owns `online_risk_score` and online-only quality aggregation from semantic, geometry, and height diagnostics.
+- `ITD_agent/evaluation_analysis/benchmark_engine.py` owns GT-based AP/F1/area-regression/error-decomposition outputs.
+- `ITD_agent/evaluation_analysis/decision_flags.py` owns pass/refine/param-search/finetune/manual-review flags and should be treated as the module's rule output layer.
+- Current metric inventory and redundancy notes are maintained in `docs/evaluation_analysis_指标清单.xlsx`.

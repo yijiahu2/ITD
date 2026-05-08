@@ -31,7 +31,7 @@ flowchart TD
     B[config_adapter<br/>运行配置适配]
     C[orchestrator<br/>主链编排]
     D[data_processing<br/>数据处理与先验提取]
-    E[evaluation_analysis A<br/>输入评估]
+    E[evaluation_analysis A<br/>结果评估与规则分析]
     F[planning/scheduler<br/>规划调度]
     G[llm_gateway<br/>结构化决策]
     H[semantic prior<br/>树冠二值语义分割]
@@ -211,13 +211,15 @@ sequenceDiagram
 - [fusion_postprocess.py](/home/xth/forest_agent_project/ITD_agent/data_processing/fusion_postprocess.py)
   - 结果融合、去重、边界统一
 
-### 4. 第一次评估分析：输入评估
+### 4. 评估分析模块
 
 目录：[ITD_agent/evaluation_analysis](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis)
 
 关键文件：
 
+- [evaluator.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/evaluator.py)
 - [main_model_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/main_model_assessment.py)
+- [reference_quality_engine.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/reference_quality_engine.py)
 - [roi_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/roi_assessment.py)
 - [child_model_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/child_model_assessment.py)
 - [final_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/final_assessment.py)
@@ -225,20 +227,27 @@ sequenceDiagram
 - [online_quality_engine.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/online_quality_engine.py)
 - [geometry_diagnostics.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/geometry_diagnostics.py)
 - [decision_flags.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/decision_flags.py)
+- [finetune_effect_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/finetune_effect_assessment.py)
+- [flow_decisions.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/flow_decisions.py)
+- [detail_ranker.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/detail_ranker.py)
+- [metrics_catalog.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/metrics_catalog.py)
 
 当前包含：
 
-- 主模型阶段结果评估
+- 主模型结果的 online-only / online-plus-reference 评估
+- reference 统计误差评分、问题单元排序和 score breakdown
 - ROI 是否进入/继续细化的规则判定
 - 专家模型 / 子模型结果对比评估
 - 最终 reference / benchmark 评估
-- 在线几何诊断、错误分解和决策 flags
-- 微调前后效果评估
+- 在线几何诊断、语义一致性聚合、错误分解和决策 flags
+- 微调前后误差改善与 benchmark 增益评估
 
 说明：
 
 - `evaluation_analysis` 不再承担输入评估职责，输入契约已迁回 `input_layer`
 - 当前模块只负责公式、规则、派生诊断和决策 flags，不负责 ROI 候选生成和 LLM 决策
+- 在线诊断底层事实主要来自 `ITD_agent/data_processing/fusion/diagnostics.py`，`evaluation_analysis` 负责在此基础上做风险分、总分、错误分解和流程标志
+- 当前指标总表维护在 [evaluation_analysis_指标清单.xlsx](/home/xth/forest_agent_project/docs/evaluation_analysis_指标清单.xlsx)
 
 ### 5. LLM 网关
 
@@ -366,17 +375,24 @@ LLM 输入约束：
 - [roi_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/roi_assessment.py)
 - [child_model_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/child_model_assessment.py)
 - [final_assessment.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/final_assessment.py)
+- [benchmark_engine.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/benchmark_engine.py)
+- [decision_flags.py](/home/xth/forest_agent_project/ITD_agent/evaluation_analysis/decision_flags.py)
 
 职责分工：
 
 - 第二次评估分析：
   - 对主模型结果做全局评估
   - 输出指标和问题参考单元明细
-  - 识别待细化 ROI
+  - 基于候选 ROI 事实判定是否需要进入细化
 - 第三次评估分析：
   - 对 ROI 细化后的合并结果做复评
   - 判断继续细化 / 停止
   - 为失败样本沉淀和微调建议提供依据
+
+补充说明：
+
+- 待细化 ROI 的候选生成归 `data_processing` / `planning`，`evaluation_analysis` 只消费候选事实并给出规则判断。
+- `final_assessment` 会根据 GT 是否存在在 `reference_quality` 与 `benchmark` 两条最终评估路径之间切换。
 
 ### 10. ROI 局部细化与 grouped inference
 

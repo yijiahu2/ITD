@@ -19,7 +19,7 @@
 - `ITD_agent/orchestration/`
   当前主运行编排目录，负责配置准备、单场景主链、grouped inference、运行期路径、输出同步与清理。
 - `ITD_agent/evaluation_analysis/`
-  当前评估分析目录，负责输入、主模型、ROI、子模型、微调效果、参考质量和最终评估。
+  当前评估分析目录，负责主模型、ROI、子模型、微调效果、参考质量、benchmark 和最终评估；模块内部只负责公式、规则、派生诊断和决策 flags，不负责 ROI 候选生成和 LLM 决策。
 - `ITD_agent/llm_gateway/`
   当前 LLM 网关目录，负责结构化 JSON 决策请求、prompt 组装和复盘输入压缩。
 - `ITD_agent/planning/agent/`

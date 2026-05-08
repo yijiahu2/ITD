@@ -1,6 +1,6 @@
 # ITD Agent Docs
 
-本目录维护当前 `forest_agent_project` 运行链路和模块边界说明。核心同步面收敛为 5 个文件：先更新 codemap，再同步入口、架构、运行流程或配置说明。
+本目录维护当前 `forest_agent_project` 运行链路、模块边界和关键评估口径说明。核心同步面收敛为 5 个文件：先更新 codemap，再同步入口、架构、运行流程或配置说明。
 
 ## 推荐阅读顺序
 
@@ -14,6 +14,15 @@
    配置目录、模板边界和顶层配置字段。
 
 专题 spec 仅在对应模块接口发生实质变化时更新；普通结构同步优先落在上述 5 个核心文件。
+
+## 评估分析相关文档
+
+- [itd_agent_runtime_architecture_guide.md](itd_agent_runtime_architecture_guide.md)
+  主流程中的 `evaluation_analysis` 职责、阶段位置和模块边界说明。
+- [evaluation_analysis_指标清单.xlsx](evaluation_analysis_指标清单.xlsx)
+  当前 `evaluation_analysis` 模块产出的评估分析指标总表，含公式、规则定义和使用环节。
+- [精简版保留指标表.md](精简版保留指标表.md)
+  `evaluation_analysis` 指标收敛思路和建议保留口径。
 
 ## 收口文档
 

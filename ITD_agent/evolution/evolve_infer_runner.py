@@ -11,6 +11,7 @@ from ITD_agent.evaluation_analysis.geometry_failure_tags import build_geometry_f
 from ITD_agent.evaluation_analysis.geometry_metrics import build_geometry_profile
 from ITD_agent.evolution.expert.expert_task_builder import build_expert_tasks
 from ITD_agent.evolution.expert.expert_task_runner import run_expert_tasks
+from ITD_agent.evolution.expert.tile_image import materialize_expert_tile, offset_instances_to_full_image
 from ITD_agent.evolution.fusion.local_roi_fusion import fuse_or_rollback
 from ITD_agent.evolution.real_inference_adapter import (
     derive_dataset_input,
@@ -115,27 +116,55 @@ def _run_real_expert_tasks(
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     cache: dict[str, dict[str, Any]] = {}
+    tile_enabled = bool((cfg.get("expert_models") or {}).get("tile_execution", False))
     for task in tasks:
         expert_model = str(task.expert_model)
-        if expert_model not in cache:
-            expert_cfg = {**_get_model_cfg(cfg, expert_model), "model_id": expert_model}
-            cache[expert_model] = run_real_segmentation_for_sample(
-                base_config_path=str(cfg["runtime"]["base_config"]),
-                image=image,
+        tile_info = {
+            "status": "disabled",
+            "tile_image_path": str(image_path),
+            "offset_xy": [0.0, 0.0],
+            "tile_window_px": list(task.tile_window_px),
+        }
+        task_image = image
+        task_image_path = image_path
+        if tile_enabled:
+            tile_info = materialize_expert_tile(
                 image_path=image_path,
-                output_dir=output_dir / "expert_models" / expert_model,
+                tile_window_px=list(task.tile_window_px),
+                output_dir=output_dir / "expert_tiles" / task.expert_task_id,
+                image_id=str(image.get("id")),
+            )
+            task_image_path = Path(str(tile_info["tile_image_path"]))
+            task_image = {
+                **image,
+                "file_name": task_image_path.name,
+                "width": int(tile_info.get("width") or image.get("width") or 1024),
+                "height": int(tile_info.get("height") or image.get("height") or 1024),
+            }
+        cache_key = f"{expert_model}:{tile_info.get('tile_image_path')}:{tile_info.get('tile_window_px')}"
+        if cache_key not in cache:
+            expert_cfg = {**_get_model_cfg(cfg, expert_model), "model_id": expert_model}
+            cache[cache_key] = run_real_segmentation_for_sample(
+                base_config_path=str(cfg["runtime"]["base_config"]),
+                image=task_image,
+                image_path=task_image_path,
+                output_dir=output_dir / "expert_models" / expert_model / task.expert_task_id,
                 model_cfg=expert_cfg,
                 score_mode=str((cfg.get("runtime") or {}).get("prediction_score_mode") or "semantic_prior_mean_prob"),
             )
+        instances = list(cache[cache_key]["instances"])
+        if tile_enabled and tile_info.get("status") == "materialized":
+            instances = offset_instances_to_full_image(instances, list(tile_info.get("offset_xy") or [0.0, 0.0]))
         results.append(
             {
                 "expert_task_id": task.expert_task_id,
                 "expert_model": expert_model,
                 "execution_mode": "real",
                 "oracle_mock": False,
-                "status": cache[expert_model]["status"],
-                "instances": list(cache[expert_model]["instances"]),
-                "artifacts": dict(cache[expert_model]["artifacts"]),
+                "status": cache[cache_key]["status"],
+                "instances": instances,
+                "artifacts": dict(cache[cache_key]["artifacts"]),
+                "tile_execution": tile_info,
             }
         )
     return results

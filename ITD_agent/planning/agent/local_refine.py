@@ -20,6 +20,7 @@ from shapely.ops import unary_union
 from shapely import wkt as shapely_wkt
 
 from ITD_agent.planning.agent.config_builder import load_yaml, save_yaml
+from ITD_agent.common.values import safe_float
 from ITD_agent.data_processing.roi.extractor import (
     clip_xiaoban_to_geometry_with_fields as dp_clip_xiaoban_to_geometry_with_fields,
     crop_roi_terrain_bundle as dp_crop_roi_terrain_bundle,
@@ -77,17 +78,6 @@ def save_json(obj: Dict[str, Any], path: str):
     ensure_parent(Path(path))
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, ensure_ascii=False)
-
-
-def safe_float(v, default=None):
-    try:
-        if v is None:
-            return default
-        if pd.isna(v):
-            return default
-        return float(v)
-    except Exception:
-        return default
 
 
 def safe_str(v, default=None):

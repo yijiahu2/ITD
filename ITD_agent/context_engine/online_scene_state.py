@@ -6,16 +6,8 @@ from typing import Any
 import numpy as np
 import rasterio
 
+from ITD_agent.common.values import safe_float as _safe_float
 from input_layer.contracts import InputManifest
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def _load_height_profile(path: str | None) -> dict[str, Any]:

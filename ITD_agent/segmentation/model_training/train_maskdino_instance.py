@@ -9,6 +9,11 @@ from typing import Any
 
 from ITD_agent.segmentation.finetuning.io_utils import dump_json, ensure_dir, load_json, load_yaml, to_bool
 from ITD_agent.segmentation.model_training.expert_injection import build_training_injection_manifest
+from ITD_agent.segmentation.model_training.training_utils import (
+    ensure_public_segmentation_dataset,
+    find_best_checkpoint,
+    grad_accum_steps,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -25,57 +30,11 @@ def _algorithm_defaults() -> dict[str, Any]:
 
 
 def _find_best_ckpt(search_root: Path) -> Path | None:
-    patterns = ["model_final.pth", "model_*.pth", "*.pth"]
-    candidates: list[Path] = []
-    for pattern in patterns:
-        candidates.extend(search_root.rglob(pattern))
-    if not candidates:
-        return None
-
-    def score(path: Path) -> tuple[int, float]:
-        name = path.name.lower()
-        priority = 0
-        if name == "model_final.pth":
-            priority += 100
-        if name.startswith("model_"):
-            priority += 20
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            mtime = 0.0
-        return priority, mtime
-
-    return sorted(candidates, key=score, reverse=True)[0]
+    return find_best_checkpoint(search_root, ["model_final.pth", "model_*.pth", "*.pth"])
 
 
 def _ensure_public_dataset(args_config: str, cfg: dict[str, Any]) -> tuple[Path, Path]:
-    dataset_dir = Path(cfg["output_dir"]) / cfg.get("segmentation_dataset_dirname", "external_segmentation_dataset")
-    summary_path = dataset_dir / "prepare_summary.json"
-    force_rebuild = to_bool(cfg.get("segmentation_dataset_force_rebuild"), default=False)
-
-    if dataset_dir.exists() and summary_path.exists() and not force_rebuild:
-        return dataset_dir, summary_path
-
-    if dataset_dir.exists() and force_rebuild:
-        # Rebuild in place so reruns do not depend on deleting large output trees first.
-        print(f"[INFO] rebuilding segmentation dataset in place: {dataset_dir}", flush=True)
-
-    cmd = [
-        sys.executable,
-        "-u",
-        "-m",
-        "ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset",
-        "--config",
-        args_config,
-    ]
-    print("[RUN segmentation dataset prepare]", flush=True)
-    print(" ".join(cmd), flush=True)
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        raise RuntimeError("ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset failed")
-    if not summary_path.exists():
-        raise RuntimeError(f"未找到 segmentation 数据准备摘要: {summary_path}")
-    return dataset_dir, summary_path
+    return ensure_public_segmentation_dataset(args_config, cfg)
 
 
 def _scheduler_steps(max_iter: int) -> tuple[int, ...]:
@@ -98,12 +57,7 @@ def _build_dataset_names(algorithm_name: str) -> tuple[str, str, str]:
 
 
 def _grad_accum_steps(cfg: dict[str, Any]) -> int:
-    raw = cfg.get("segmentation_train_grad_accum_steps", 1)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = 1
-    return max(1, value)
+    return grad_accum_steps(cfg)
 
 
 def _write_generated_config(

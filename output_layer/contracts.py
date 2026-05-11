@@ -1,0 +1,22 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+
+@dataclass
+class FinalDeliverables:
+    publish_root: str
+    tree_crowns_shp: str | None = None
+    tree_points_shp: str | None = None
+    semantic_prior_tif: str | None = None
+    semantic_prior_png: str | None = None
+    segmentation_visualization_png: str | None = None
+    final_evaluation_report_md: str | None = None
+    final_evaluation_report_json: str | None = None
+    tree_crowns_height_structure_gpkg: str | None = None
+    height_structure_summary_json: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

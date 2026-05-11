@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.config_adapter import load_raw_yaml, load_runtime_config, save_runtime_config
 from ITD_agent.finetune_pool.policy import infer_failure_category
 from ITD_agent.model_roles import EXPERT_MODEL_ROLE, MAIN_MODEL_ROLE, normalize_model_role
@@ -77,15 +78,6 @@ def _as_str_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
     return [str(value).strip()]
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def _normalize_weight_map(raw: dict[str, Any], defaults: dict[str, float]) -> dict[str, float]:

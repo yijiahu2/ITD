@@ -5,6 +5,7 @@ from typing import Any
 
 from input_layer.mainline_profiles import get_mainline_capabilities, resolve_mainline_profile
 
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.evaluation_analysis.detail_ranker import summarize_details_csv
 from ITD_agent.finetune_pool.query import load_finetune_pool_snapshot, load_recent_failed_cases
 from ITD_agent.memory_store.query import (
@@ -27,15 +28,6 @@ def _input_manifest_summary(data_processing_summary: dict[str, Any]) -> dict[str
     metadata = data_processing_summary.get("metadata") or {}
     summary = metadata.get("input_manifest_summary") or {}
     return summary if isinstance(summary, dict) else {}
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def _round_to_step(value: float, *, step: int, min_value: int, max_value: int) -> int:

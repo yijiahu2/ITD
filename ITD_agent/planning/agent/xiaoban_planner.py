@@ -12,6 +12,7 @@ import pandas as pd
 
 from ITD_agent.planning.agent.config_builder import load_yaml, save_yaml
 from ITD_agent.planning.agent.xiaoban_prompt_builder import build_group_param_prompt
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.data_processing.vector import standardize_inventory_crown_width
 
 SAFE_PARAM_SPACE = {
@@ -33,15 +34,6 @@ def save_json(obj: Dict[str, Any], path: str | Path) -> None:
     ensure_parent(path)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
-
-
-def _safe_float(v: Any, default: float | None = None) -> float | None:
-    try:
-        if v is None or pd.isna(v):
-            return default
-        return float(v)
-    except Exception:
-        return default
 
 
 def _safe_int(v: Any, default: int) -> int:

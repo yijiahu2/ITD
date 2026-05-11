@@ -14,18 +14,8 @@ from rasterio.features import rasterize
 from rasterio.mask import mask
 from shapely.geometry import box
 
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.segmentation.finetuning.io_utils import dump_csv, dump_json, load_csv, load_yaml
-
-
-def _safe_float(v: Any) -> float | None:
-    if v is None:
-        return None
-    try:
-        if pd.isna(v):
-            return None
-        return float(v)
-    except Exception:
-        return None
 
 
 def _safe_str(v: Any) -> str | None:

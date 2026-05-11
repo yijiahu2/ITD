@@ -8,6 +8,7 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 
+from ITD_agent.common.config_refs import reference_id_field, reference_vector_path
 from ITD_agent.config_adapter import load_runtime_config
 from ITD_agent.orchestration.output_management import (
     apply_persistent_retention,
@@ -50,22 +51,6 @@ LEGACY_RUN_REPORT_FILENAME = "run_experiment_report.md"
 EVAL_METRICS_FILENAME = "evaluation_metrics.json"
 EVAL_DETAILS_FILENAME = "evaluation_details.csv"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _reference_vector_path(cfg: dict[str, Any]) -> str | None:
-    return (
-        cfg.get("reference_vector_path")
-        or cfg.get("inventory_vector_path")
-        or cfg.get("xiaoban_shp")
-    )
-
-
-def _reference_id_field(cfg: dict[str, Any]) -> str | None:
-    return (
-        cfg.get("reference_id_field")
-        or cfg.get("inventory_id_field")
-        or cfg.get("xiaoban_id_field")
-    )
 
 
 def slim_group_summary(group_summary: dict[str, Any]) -> dict[str, Any]:
@@ -136,7 +121,7 @@ def _prepare_grouped_runtime_config(config_path: str) -> str:
     context_dir = Path(cfg["metrics_json"]).resolve().parent / "grouped_spatial_context"
     ensure_dir(context_dir)
 
-    existing_reference_vector = _reference_vector_path(cfg)
+    existing_reference_vector = reference_vector_path(cfg)
     if (
         cfg.get("spatial_context_summary_json")
         and Path(str(cfg["spatial_context_summary_json"])).exists()
@@ -152,9 +137,9 @@ def _prepare_grouped_runtime_config(config_path: str) -> str:
     context_result = prepare_spatial_context(
         dom_tif=cfg["input_image"],
         dem_tif=cfg.get("dem_tif"),
-        xiaoban_shp=_reference_vector_path(cfg),
+        xiaoban_shp=reference_vector_path(cfg),
         out_dir=context_dir,
-        xiaoban_id_field=_reference_id_field(cfg),
+        xiaoban_id_field=reference_id_field(cfg),
         tree_count_field=cfg.get("tree_count_field"),
         crown_field=cfg.get("crown_field"),
         closure_field=cfg.get("closure_field"),
@@ -164,7 +149,7 @@ def _prepare_grouped_runtime_config(config_path: str) -> str:
         plain_relief_threshold_m=float(cfg.get("plain_relief_threshold_m", 30.0)),
     )
 
-    cfg["reference_vector_path"] = context_result.get("xiaoban_shp", _reference_vector_path(cfg))
+    cfg["reference_vector_path"] = context_result.get("xiaoban_shp", reference_vector_path(cfg))
     cfg["inventory_vector_path"] = cfg["reference_vector_path"]
     cfg["xiaoban_shp"] = cfg["reference_vector_path"]
     for key in ["dem_tif", "slope_tif", "aspect_tif", "landform_tif", "slope_position_tif"]:
@@ -378,13 +363,13 @@ def _run_final_evaluation(cfg: dict[str, Any], merged_shp: str, terrain_info: di
         "--patch_raster",
         cfg["input_image"],
         "--reference_vector",
-        _reference_vector_path(cfg),
+        reference_vector_path(cfg),
         "--out_json",
         cfg["metrics_json"],
         "--out_csv",
         cfg["details_csv"],
         "--id_field",
-        _reference_id_field(cfg),
+        reference_id_field(cfg),
         "--tree_count_field",
         cfg["tree_count_field"],
         "--crown_field",
@@ -453,7 +438,7 @@ def run_grouped_experiment(config_path: str) -> dict[str, Any]:
             group=group,
             group_root=group_root,
             terrain_info=terrain_info,
-            xiaoban_id_field=_reference_id_field(cfg) or cfg["xiaoban_id_field"],
+            xiaoban_id_field=reference_id_field(cfg) or cfg["xiaoban_id_field"],
         )
         group_summaries.append(group_summary)
         if group_summary.get("filtered_group_inst_shp"):

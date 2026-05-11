@@ -5,6 +5,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from ITD_agent.common.config_refs import reference_vector_path
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.config_adapter import load_raw_yaml, load_runtime_config, save_runtime_config
 from ITD_agent.data_processing.fusion import rasterize_instances_to_label_raster
 from ITD_agent.data_processing.fusion.postprocess import fuse_instance_layers
@@ -95,30 +97,13 @@ def extract_segmentation_params(cfg: dict[str, Any]) -> dict[str, Any]:
     return extract_segmentation_params_impl(cfg)
 
 
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
-
-
-def _reference_vector_path(cfg: dict[str, Any]) -> str | None:
-    return (
-        cfg.get("reference_vector_path")
-        or cfg.get("inventory_vector_path")
-        or cfg.get("xiaoban_shp")
-    )
-
-
 def _postprocess_instance_output(cfg: dict[str, Any], inst_shp: str, phase_tag: str) -> str:
     source_path = Path(inst_shp)
     postprocessed_path = source_path.with_name(f"{source_path.stem}_{phase_tag}_postprocessed{source_path.suffix}")
     result = fuse_instance_layers(
         instance_paths=[inst_shp],
         output_path=postprocessed_path,
-        boundary_vector_path=_reference_vector_path(cfg),
+        boundary_vector_path=reference_vector_path(cfg),
         overlap_ratio_thr=0.5,
         boundary_band_m=1.5,
         min_area_m2=6.0,

@@ -5,8 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from input_layer.mainline_profiles import get_mainline_capabilities, resolve_mainline_profile
-
+from ITD_agent.common.json_store import append_jsonl, replace_jsonl, write_json
+from ITD_agent.common.scene_profile import extract_input_profile, scene_profile_from_summary
+from ITD_agent.common.values import safe_float
 from ITD_agent.memory_store.compact import compact_memory_record, compact_planning_summary
 from ITD_agent.memory_store.contracts import (
     ExecutionTraceMemory,
@@ -23,15 +24,6 @@ from ITD_agent.memory_store.query import (
 )
 
 
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
-
-
 def _timestamp() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -40,24 +32,11 @@ def _make_memory_id(prefix: str, run_name: str | None) -> str:
     return f"{prefix}:{run_name or 'unknown'}:{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
 
-def _append_jsonl(path: Path, payload: dict[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    return str(path)
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return str(path)
-
-
 def _score_metrics(metrics: dict[str, Any]) -> float | None:
-    tree = _safe_float(metrics.get("tree_count_error_ratio"))
-    crown = _safe_float(metrics.get("mean_crown_width_error_ratio"))
-    closure = _safe_float(metrics.get("closure_error_abs"))
-    density = _safe_float(metrics.get("density_error_abs"))
+    tree = safe_float(metrics.get("tree_count_error_ratio"))
+    crown = safe_float(metrics.get("mean_crown_width_error_ratio"))
+    closure = safe_float(metrics.get("closure_error_abs"))
+    density = safe_float(metrics.get("density_error_abs"))
     if tree is None or crown is None or closure is None:
         return None
     return tree + crown + closure + (density or 0.0) / 1000.0
@@ -78,107 +57,11 @@ def _artifact_refs(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_input_profile(input_manifest: dict[str, Any]) -> dict[str, Any]:
-    metadata = input_manifest.get("metadata") or {}
-    mainline_profile = metadata.get("mainline_profile") or resolve_mainline_profile(input_manifest)
-    capabilities = metadata.get("mainline_capabilities") or get_mainline_capabilities(mainline_profile)
-    remote_sensing = input_manifest.get("remote_sensing")
-    terrain = input_manifest.get("terrain")
-    remote_sensing_count = len((remote_sensing or {}).get("images") or []) if isinstance(remote_sensing, dict) else len(input_manifest.get("remote_sensing_images") or [])
-    dem_count = len((terrain or {}).get("dem") or []) if isinstance(terrain, dict) else len(input_manifest.get("dem_items") or [])
-    return {
-        "mainline_profile": mainline_profile,
-        "mainline_capabilities": capabilities,
-        "input_modalities": metadata.get("input_modalities") or {},
-        "remote_sensing_count": remote_sensing_count,
-        "dem_count": dem_count,
-        "survey_table_count": len(input_manifest.get("survey_tables") or []),
-        "industry_vector_count": len(input_manifest.get("industry_vectors") or []),
-        "knowledge_count": len(input_manifest.get("domain_knowledge_items") or []),
-        "public_dataset_count": len(input_manifest.get("public_datasets") or []),
-    }
+    return extract_input_profile(input_manifest)
 
 
 def _extract_scene_profile(summary: dict[str, Any], input_manifest: dict[str, Any]) -> dict[str, Any]:
-    input_profile = _extract_input_profile(input_manifest)
-    mainline_profile = input_profile.get("mainline_profile")
-    capabilities = input_profile.get("mainline_capabilities") or {}
-    allow_external_knowledge = bool(capabilities.get("allow_external_knowledge"))
-    allow_public_datasets = bool(capabilities.get("allow_public_datasets"))
-    run_meta = summary.get("run_meta") or {}
-    terrain_info = run_meta.get("terrain_info") or {}
-    input_assessment = (
-        ((summary.get("data_processing") or {}).get("input_assessment") or {})
-        or ((summary.get("evaluation_analysis") or {}).get("input_assessment") or {})
-    )
-    scene_analysis = input_assessment.get("scene_analysis") or {}
-    image_texture_analysis = scene_analysis.get("image_texture_analysis") or {}
-    image_quality_analysis = scene_analysis.get("image_quality_analysis") or {}
-    processing_summary = ((summary.get("data_processing") or {}).get("processing_summary") or {})
-    image_profiles = processing_summary.get("image_profiles") or []
-    manifest_summary = ((processing_summary.get("metadata") or {}).get("input_manifest_summary") or {})
-    knowledge_profiles = manifest_summary.get("domain_knowledge_items") or []
-    public_dataset_profiles = manifest_summary.get("public_datasets") or []
-    image_resolution = None
-    if image_profiles:
-        image_resolution = image_profiles[0].get("resolution_x_m") or image_profiles[0].get("resolution_y_m")
-    tags: list[str] = []
-    forest_type = run_meta.get("forest_type") or scene_analysis.get("forest_type")
-    terrain_type = (terrain_info.get("landform_type") or run_meta.get("terrain_type")) if capabilities.get("allow_dem") else None
-    stand_labels = ((scene_analysis.get("stand_condition") or {}).get("labels") or [])
-    texture_labels = image_texture_analysis.get("labels") or []
-    quality_labels = image_quality_analysis.get("labels") or []
-    if forest_type:
-        tags.append(str(forest_type))
-    if terrain_type:
-        tags.append(str(terrain_type))
-    for label in stand_labels:
-        if label:
-            tags.append(str(label))
-    for label in texture_labels:
-        if label:
-            tags.append(str(label))
-    for label in quality_labels:
-        if label:
-            tags.append(str(label))
-    if allow_external_knowledge:
-        tags.extend(
-            sorted(
-                {
-                    str(item.get("normalized_type"))
-                    for item in knowledge_profiles
-                    if item.get("normalized_type")
-                }
-            )
-        )
-    tags = [tag for i, tag in enumerate(tags) if tag and tag not in tags[:i]]
-    return {
-        "mainline_profile": mainline_profile,
-        "input_modalities": input_profile.get("input_modalities") or {},
-        "forest_type": forest_type,
-        "terrain_type": terrain_type,
-        "image_resolution_m": image_resolution,
-        "knowledge_profile_types": sorted(
-            {
-                str(item.get("normalized_type"))
-                for item in knowledge_profiles
-                if item.get("normalized_type")
-            }
-        ) if allow_external_knowledge else [],
-        "public_dataset_roles": sorted(
-            {
-                str(role)
-                for item in public_dataset_profiles
-                for role in (item.get("usage_roles") or [])
-                if role
-            }
-        ) if allow_public_datasets else [],
-        "tags": tags,
-        "stand_condition_labels": stand_labels,
-        "texture_labels": texture_labels,
-        "image_texture_levels": image_texture_analysis.get("levels") or {},
-        "quality_labels": quality_labels,
-        "image_quality_levels": image_quality_analysis.get("levels") or {},
-    }
+    return scene_profile_from_summary(summary, input_manifest)
 
 
 def _planning_summary(summary: dict[str, Any]) -> dict[str, Any]:
@@ -251,8 +134,8 @@ def _update_indexes(*, memory_root: str | Path, payload: dict[str, Any]) -> None
         tag_index.setdefault(str(tag), [])
         tag_index[str(tag)].append(memory_ref)
 
-    _write_json(scene_index_path, scene_index)
-    _write_json(tag_index_path, tag_index)
+    write_json(scene_index_path, scene_index)
+    write_json(tag_index_path, tag_index)
 
 
 def _trim_artifact_refs(artifact_refs: dict[str, Any]) -> dict[str, Any]:
@@ -267,16 +150,6 @@ def _trim_artifact_refs(artifact_refs: dict[str, Any]) -> dict[str, Any]:
         "segmentation_visualization_png",
     }
     return {key: value for key, value in (artifact_refs or {}).items() if key in allowed}
-
-
-def _replace_jsonl(path: Path, rows: list[dict[str, Any]]) -> str:
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(temp_path, "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    temp_path.replace(path)
-    return str(path)
 
 
 def compact_memory_store_records(
@@ -312,7 +185,7 @@ def compact_memory_store_records(
                 except Exception:
                     continue
         before_size = path.stat().st_size if path.exists() else 0
-        _replace_jsonl(path, rows)
+        replace_jsonl(path, rows)
         after_size = path.stat().st_size if path.exists() else 0
         result["compacted_files"][name] = {
             "row_count": len(rows),
@@ -392,8 +265,8 @@ def rebuild_memory_indexes(
                     tag_index.setdefault(str(tag), [])
                     tag_index[str(tag)].append(memory_ref)
 
-    _write_json(scene_index_path, scene_index)
-    _write_json(tag_index_path, tag_index)
+    write_json(scene_index_path, scene_index)
+    write_json(tag_index_path, tag_index)
     return {
         "memory_root": str(root),
         "indexed_record_count": indexed_count,
@@ -428,7 +301,7 @@ def record_execution(
     ).to_dict()
     payload["artifact_refs"] = _trim_artifact_refs(payload.get("artifact_refs") or {})
     payload = compact_memory_record(payload)
-    new_path = _append_jsonl(root / "records" / "execution_trace.jsonl", payload)
+    new_path = append_jsonl(root / "records" / "execution_trace.jsonl", payload)
     _update_indexes(memory_root=root, payload=payload)
     return {
         "execution_trace_log": new_path,
@@ -448,9 +321,9 @@ def record_success_strategy(
         "closure_error_abs": 0.12,
     }
     metrics = summary.get("metrics") or {}
-    tree = _safe_float(metrics.get("tree_count_error_ratio"))
-    crown = _safe_float(metrics.get("mean_crown_width_error_ratio"))
-    closure = _safe_float(metrics.get("closure_error_abs"))
+    tree = safe_float(metrics.get("tree_count_error_ratio"))
+    crown = safe_float(metrics.get("mean_crown_width_error_ratio"))
+    closure = safe_float(metrics.get("closure_error_abs"))
     if tree is None or crown is None or closure is None:
         return None
     if not (
@@ -477,7 +350,7 @@ def record_success_strategy(
     ).to_dict()
     payload["artifact_refs"] = _trim_artifact_refs(payload.get("artifact_refs") or {})
     payload = compact_memory_record(payload)
-    new_path = _append_jsonl(Path(memory_root) / "records" / "successful_strategy.jsonl", payload)
+    new_path = append_jsonl(Path(memory_root) / "records" / "successful_strategy.jsonl", payload)
     _update_indexes(memory_root=memory_root, payload=payload)
     return {"successful_strategy_log": new_path}
 
@@ -498,10 +371,10 @@ def record_failure_pattern(
     final_eval = summary.get("final_evaluation") or {}
     benchmark_metrics = final_eval.get("metrics") or {}
     retrospective = (((summary.get("llm_gateway") or {}).get("run_retrospective") or {}).get("parsed_result") or {})
-    tree = _safe_float(metrics.get("tree_count_error_ratio"))
-    crown = _safe_float(metrics.get("mean_crown_width_error_ratio"))
-    closure = _safe_float(metrics.get("closure_error_abs"))
-    ap50 = _safe_float(benchmark_metrics.get("ap50"))
+    tree = safe_float(metrics.get("tree_count_error_ratio"))
+    crown = safe_float(metrics.get("mean_crown_width_error_ratio"))
+    closure = safe_float(metrics.get("closure_error_abs"))
+    ap50 = safe_float(benchmark_metrics.get("ap50"))
     should_record = bool(
         retrospective.get("failure_modes")
         or (tree is not None and tree >= thresholds["tree_count_error_ratio"])
@@ -534,7 +407,7 @@ def record_failure_pattern(
     ).to_dict()
     payload["artifact_refs"] = _trim_artifact_refs(payload.get("artifact_refs") or {})
     payload = compact_memory_record(payload)
-    path = _append_jsonl(Path(memory_root) / "records" / "failure_pattern.jsonl", payload)
+    path = append_jsonl(Path(memory_root) / "records" / "failure_pattern.jsonl", payload)
     _update_indexes(memory_root=memory_root, payload=payload)
     return {"failure_pattern_log": path}
 
@@ -559,7 +432,7 @@ def record_run_retrospective(
         tags=scene_profile.get("tags") or [],
     ).to_dict()
     payload = compact_memory_record(payload)
-    path = _append_jsonl(Path(memory_root) / "records" / "run_retrospective.jsonl", payload)
+    path = append_jsonl(Path(memory_root) / "records" / "run_retrospective.jsonl", payload)
     _update_indexes(memory_root=memory_root, payload=payload)
     return {"run_retrospective_log": path}
 

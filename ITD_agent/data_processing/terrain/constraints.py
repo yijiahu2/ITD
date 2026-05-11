@@ -24,6 +24,8 @@ from typing import Dict, Any, Optional, Tuple
 
 import numpy as np
 
+from ITD_agent.common.values import safe_float
+
 
 DEFAULT_FLAT_SLOPE_THRESHOLD_DEG = 5.0
 DEFAULT_LANDFORM_WINDOW_KM2 = 10.0
@@ -37,17 +39,6 @@ class TerrainRuleConfig:
     flat_slope_threshold_deg: float = DEFAULT_FLAT_SLOPE_THRESHOLD_DEG
     plain_relief_threshold_m: float = DEFAULT_PLAIN_RELIEF_THRESHOLD_M
     ridge_buffer_drop_m: float = DEFAULT_RIDGE_BUFFER_DROP_M
-
-
-def safe_float(v, default=None):
-    try:
-        if v is None:
-            return default
-        if isinstance(v, str) and v.strip() == "":
-            return default
-        return float(v)
-    except Exception:
-        return default
 
 
 def classify_slope_class(slope_deg: Optional[float]) -> Optional[str]:

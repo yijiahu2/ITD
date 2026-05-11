@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
+from ITD_agent.common.serialization import DataclassDictMixin
 
-@dataclass
-class ExecutionTraceMemory:
+
+@dataclass(frozen=True)
+class ExecutionTraceMemory(DataclassDictMixin):
     memory_id: str
     memory_type: str
     timestamp: str
@@ -20,12 +22,10 @@ class ExecutionTraceMemory:
     tags: list[str] = field(default_factory=list)
     source: str = "orchestrator"
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
-@dataclass
-class SuccessfulStrategyMemory:
+@dataclass(frozen=True)
+class SuccessfulStrategyMemory(DataclassDictMixin):
     memory_id: str
     memory_type: str
     timestamp: str
@@ -39,12 +39,10 @@ class SuccessfulStrategyMemory:
     tags: list[str] = field(default_factory=list)
     source: str = "orchestrator"
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
-@dataclass
-class FailurePatternMemory:
+@dataclass(frozen=True)
+class FailurePatternMemory(DataclassDictMixin):
     memory_id: str
     memory_type: str
     timestamp: str
@@ -58,12 +56,10 @@ class FailurePatternMemory:
     tags: list[str] = field(default_factory=list)
     source: str = "orchestrator"
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
-@dataclass
-class RunRetrospectiveMemory:
+@dataclass(frozen=True)
+class RunRetrospectiveMemory(DataclassDictMixin):
     memory_id: str
     memory_type: str
     timestamp: str
@@ -73,6 +69,3 @@ class RunRetrospectiveMemory:
     parsed_result: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     source: str = "llm_gateway"
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)

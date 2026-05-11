@@ -11,6 +11,11 @@ from typing import Any
 from ITD_agent.segmentation.finetuning.io_utils import dump_json, ensure_dir, load_json, load_yaml, to_bool
 from ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset import _sanitize_payload
 from ITD_agent.segmentation.model_training.expert_injection import build_training_injection_manifest
+from ITD_agent.segmentation.model_training.training_utils import (
+    ensure_public_segmentation_dataset,
+    find_best_checkpoint,
+    grad_accum_steps,
+)
 from ITD_agent.segmentation.model_registry.common import resolve_algorithm_cfg
 from ITD_agent.segmentation.model_registry.mmdet_specs import MMDetAlgorithmSpec, get_mmdet_algorithm_spec, list_mmdet_algorithm_names
 
@@ -61,30 +66,7 @@ def _resolve_training_env(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _find_best_ckpt(search_root: Path) -> Path | None:
-    patterns = ["best*.pth", "best*.pt", "latest*.pth", "epoch_*.pth", "*.pth", "*.pt"]
-    candidates: list[Path] = []
-    for pattern in patterns:
-        candidates.extend(search_root.rglob(pattern))
-
-    if not candidates:
-        return None
-
-    def score(path: Path) -> tuple[int, float]:
-        name = path.name.lower()
-        priority = 0
-        if "best" in name:
-            priority += 100
-        if "coco" in name and "segm" in name:
-            priority += 20
-        if "latest" in name:
-            priority += 10
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            mtime = 0.0
-        return priority, mtime
-
-    return sorted(candidates, key=score, reverse=True)[0]
+    return find_best_checkpoint(search_root, ["best*.pth", "best*.pt", "latest*.pth", "epoch_*.pth", "*.pth", "*.pt"])
 
 
 def _materialize_sanitized_annotation_files(
@@ -122,35 +104,7 @@ def _materialize_sanitized_annotation_files(
 
 
 def _ensure_public_dataset(args_config: str, cfg: dict[str, Any]) -> tuple[Path, Path]:
-    dataset_dir = Path(cfg["output_dir"]) / cfg.get("segmentation_dataset_dirname", "external_segmentation_dataset")
-    summary_path = dataset_dir / "prepare_summary.json"
-    force_rebuild = to_bool(cfg.get("segmentation_dataset_force_rebuild"), default=False)
-
-    if dataset_dir.exists() and summary_path.exists() and not force_rebuild:
-        return dataset_dir, summary_path
-
-    if dataset_dir.exists() and force_rebuild:
-        # Rebuild in place so reruns do not depend on deleting large output trees first.
-        print(f"[INFO] rebuilding segmentation dataset in place: {dataset_dir}", flush=True)
-
-    cmd = [
-        sys.executable,
-        "-u",
-        "-m",
-        "ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset",
-        "--config",
-        args_config,
-    ]
-    print("[RUN segmentation dataset prepare]", flush=True)
-    print(" ".join(cmd), flush=True)
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        raise RuntimeError("ITD_agent.segmentation.model_training.prepare_public_coco_segmentation_dataset failed")
-
-    if not summary_path.exists():
-        raise RuntimeError(f"未找到 segmentation 数据准备摘要: {summary_path}")
-
-    return dataset_dir, summary_path
+    return ensure_public_segmentation_dataset(args_config, cfg)
 
 
 def _scheduler_milestones(max_epochs: int) -> list[int]:
@@ -182,12 +136,7 @@ def _default_weight_decay(spec: MMDetAlgorithmSpec) -> float:
 
 
 def _grad_accum_steps(cfg: dict[str, Any]) -> int:
-    raw = cfg.get("segmentation_train_grad_accum_steps", 1)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = 1
-    return max(1, value)
+    return grad_accum_steps(cfg)
 
 
 def _wrap_train_dataset_cfg(base_cfg: dict[str, Any], injection_manifest: dict[str, Any]) -> dict[str, Any]:

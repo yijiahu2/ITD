@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from ITD_agent.common.values import safe_float
 from tools.process_runner import run_streaming
 
 
@@ -171,15 +172,6 @@ def normalize_bool(v: Any) -> bool:
     if isinstance(v, str):
         return v.lower() in ("1", "true", "yes", "y", "on")
     return bool(v)
-
-
-def safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def copy_optional_file(src: str | Path | None, dst: str | Path | None) -> str | None:

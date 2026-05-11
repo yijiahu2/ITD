@@ -6,14 +6,7 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
+from ITD_agent.common.values import safe_float as _safe_float
 
 
 def _detect_score_field(gdf: gpd.GeoDataFrame, configured: str | None = None) -> tuple[str | None, str]:

@@ -35,11 +35,8 @@ historical experiments, dataset inspection, or Codex/ECC configuration work:
 - `outputs/`
 - `tmp_debug/`
 - `data/`
-- `configs/generated/`
 - `.agents/`
 - `.codex/`
-- `ITD_agent/memory_store/`
-- `ITD_agent/finetune_pool/`
 
 ## Targeted Exceptions
 
@@ -52,15 +49,10 @@ it, but use targeted reads instead of broad scans.
   subdirectory under `tmp_debug/`.
 - If dataset inspection is required, read only the named file or subdirectory
   under `data/`.
-- If historical config comparison is required, read only the specific file under
-  `configs/generated/`.
 - If ECC skill behavior must be inspected, read only the specific skill file
   under `.agents/skills/`.
 - If Codex configuration or agent behavior must be inspected, read only the
   specific file under `.codex/`.
-- If memory-store or finetune-pool behavior must be inspected, read only the
-  specific file or subdirectory under `ITD_agent/memory_store/` or
-  `ITD_agent/finetune_pool/`.
 - Never start with repo-wide search across blocked paths.
 - When escalating into a blocked path, state which path is being opened and why.
 

@@ -19,9 +19,9 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.mask import mask
 from shapely.geometry import box
 
+from ITD_agent.data_processing.vector.spatial_context import aspect_stats_for_geom, raster_stats_for_geom
 from ITD_agent.data_processing.vector import (
     equivalent_crown_width,
     inventory_mean_crown_width_from_geometry,
@@ -142,135 +142,6 @@ def overlay_patch_xiaoban(patch_gdf, xiaoban_gdf, id_field):
     inter["overlap_ratio_in_xiaoban"] = inter["overlap_ratio_in_xiaoban"].fillna(0.0)
 
     return inter
-
-
-# =========================
-# terrain 工具
-# =========================
-
-ASPECT_CLASS_ORDER = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-
-
-def classify_aspect_deg(aspect_deg: Optional[float]) -> Optional[str]:
-    if aspect_deg is None or pd.isna(aspect_deg):
-        return None
-    x = float(aspect_deg) % 360.0
-    bins = [
-        (337.5, 360.0, "N"),
-        (0.0, 22.5, "N"),
-        (22.5, 67.5, "NE"),
-        (67.5, 112.5, "E"),
-        (112.5, 157.5, "SE"),
-        (157.5, 202.5, "S"),
-        (202.5, 247.5, "SW"),
-        (247.5, 292.5, "W"),
-        (292.5, 337.5, "NW"),
-    ]
-    for lo, hi, label in bins:
-        if lo <= x < hi:
-            return label
-    return "N"
-
-
-def circular_mean_deg(values: np.ndarray) -> Optional[float]:
-    if values is None or len(values) == 0:
-        return None
-    vals = np.asarray(values, dtype=float)
-    vals = vals[np.isfinite(vals)]
-    if len(vals) == 0:
-        return None
-
-    rad = np.deg2rad(vals)
-    sin_mean = np.mean(np.sin(rad))
-    cos_mean = np.mean(np.cos(rad))
-
-    if abs(sin_mean) < 1e-12 and abs(cos_mean) < 1e-12:
-        return None
-
-    ang = np.rad2deg(np.arctan2(sin_mean, cos_mean))
-    return float((ang + 360.0) % 360.0)
-
-
-def dominant_aspect_class(values: np.ndarray) -> Optional[str]:
-    if values is None or len(values) == 0:
-        return None
-    vals = np.asarray(values, dtype=float)
-    vals = vals[np.isfinite(vals)]
-    if len(vals) == 0:
-        return None
-
-    classes = [classify_aspect_deg(v) for v in vals]
-    classes = [c for c in classes if c is not None]
-    if not classes:
-        return None
-
-    s = pd.Series(classes)
-    vc = s.value_counts()
-    return str(vc.index[0])
-
-
-def _masked_values_from_geom(raster_path: str, geom_gdf: gpd.GeoDataFrame) -> np.ndarray:
-    with rasterio.open(raster_path) as src:
-        geom = geom_gdf.to_crs(src.crs)
-        geoms = [g.__geo_interface__ for g in geom.geometry if g is not None and not g.is_empty]
-        if not geoms:
-            return np.array([], dtype=np.float32)
-
-        out_image, _ = mask(src, geoms, crop=True, filled=False)
-        band = out_image[0]
-
-        if np.ma.isMaskedArray(band):
-            vals = band.compressed()
-        else:
-            vals = band.reshape(-1)
-
-        vals = np.asarray(vals, dtype=np.float32)
-        vals = vals[np.isfinite(vals)]
-
-        nodata = src.nodata
-        if nodata is not None:
-            vals = vals[~np.isclose(vals, nodata)]
-
-        return vals
-
-
-def raster_stats_for_geom(raster_path: str, geom_gdf: gpd.GeoDataFrame) -> Dict[str, Optional[float]]:
-    vals = _masked_values_from_geom(raster_path, geom_gdf)
-
-    if len(vals) == 0:
-        return {
-            "mean": None,
-            "std": None,
-            "min": None,
-            "max": None,
-            "relief": None,
-            "count": 0,
-        }
-
-    return {
-        "mean": float(np.mean(vals)),
-        "std": float(np.std(vals)),
-        "min": float(np.min(vals)),
-        "max": float(np.max(vals)),
-        "relief": float(np.max(vals) - np.min(vals)),
-        "count": int(len(vals)),
-    }
-
-
-def aspect_stats_for_geom(aspect_raster_path: str, geom_gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
-    vals = _masked_values_from_geom(aspect_raster_path, geom_gdf)
-    if len(vals) == 0:
-        return {
-            "mean_aspect_deg": None,
-            "dominant_aspect_class": None,
-            "aspect_count": 0,
-        }
-
-    return {
-        "mean_aspect_deg": circular_mean_deg(vals),
-        "dominant_aspect_class": dominant_aspect_class(vals),
-        "aspect_count": int(len(vals)),
-    }
 
 
 def prepare_terrain_inputs(

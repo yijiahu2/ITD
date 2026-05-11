@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from ITD_agent.common.json_store import write_json
 from ITD_agent.finetune_pool.query import load_finetune_pool_snapshot, load_public_dataset_candidates, load_recent_finetune_pool_samples
 from ITD_agent.finetune_pool.store import DEFAULT_FINETUNE_POOL_ROOT
 from ITD_agent.model_roles import EXPERT_MODEL_ROLE, normalize_model_role
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-    return str(path)
 
 
 def _infer_target_model_role(summary: dict[str, Any], finetune_plan: dict[str, Any], snapshot: dict[str, Any]) -> str:
@@ -140,7 +133,7 @@ def export_finetune_dataset_bundle(
 
     if output_path is None:
         output_path = Path(runtime_cfg.get("output_dir") or ".").resolve() / "finetune" / "finetune_dataset_bundle.json"
-    bundle_path = _write_json(Path(output_path), bundle)
+    bundle_path = write_json(Path(output_path), bundle)
     return {
         "dataset_bundle_path": bundle_path,
         "selection_summary": bundle["selection_summary"],

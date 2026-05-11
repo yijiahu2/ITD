@@ -5,40 +5,18 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from ITD_agent.common.config_refs import reference_id_field, reference_vector_path
+from ITD_agent.common.values import safe_float as _safe_float
+
 from .artifact_store import get_phase_dir
 from .contracts import ReferenceQualityResult
 from .detail_ranker import summarize_details_csv
 from .metrics_catalog import REFERENCE_METRIC_CATALOG
 
 
-def _reference_vector_path(cfg: dict[str, Any]) -> str | None:
-    return (
-        cfg.get("reference_vector_path")
-        or cfg.get("inventory_vector_path")
-        or cfg.get("xiaoban_shp")
-    )
-
-
-def _reference_id_field(cfg: dict[str, Any]) -> str | None:
-    return (
-        cfg.get("reference_id_field")
-        or cfg.get("inventory_id_field")
-        or cfg.get("xiaoban_id_field")
-    )
-
-
 def _load_json(path: str | Path) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def _clamp01(value: float | None) -> float:
@@ -274,13 +252,13 @@ def evaluate_reference_quality(
         "--patch_raster",
         str(cfg["input_image"]),
         "--reference_vector",
-        str(_reference_vector_path(cfg)),
+        str(reference_vector_path(cfg)),
         "--evaluation_metrics_json",
         str(metrics_json),
         "--evaluation_details_csv",
         str(details_csv),
         "--id_field",
-        str(_reference_id_field(cfg)),
+        str(reference_id_field(cfg)),
         "--tree_count_field",
         str(cfg["tree_count_field"]),
         "--crown_field",

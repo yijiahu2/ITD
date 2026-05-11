@@ -18,6 +18,7 @@ def build_review_report(
 ) -> dict[str, Any]:
     decision_counts = Counter(str(item.get("decision")) for item in decisions)
     candidate_counts = Counter(str(item.get("candidate_type")) for item in decisions)
+    guardrail_blocks = sum(1 for item in decisions if item.get("candidate_type") == "guardrail_probe" and item.get("decision") == "reject")
     invalid_count = sum(1 for row in integrity_rows if not row.get("valid"))
     missing_artifact_count = sum(len(row.get("missing_artifacts") or []) for row in integrity_rows)
     report = {
@@ -29,6 +30,7 @@ def build_review_report(
         "missing_artifacts": missing_artifact_count,
         "decision_counts": dict(decision_counts),
         "candidate_counts": dict(candidate_counts),
+        "guardrail_blocks": guardrail_blocks,
         "asset_counts": asset_counts,
     }
     write_json(output_dir / "reports" / "review_summary.json", report)

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from input_layer.mainline_profiles import get_mainline_capabilities, resolve_mainline_profile
-
+from ITD_agent.common.config_refs import reference_vector_path
+from ITD_agent.common.json_store import append_jsonl, load_json, load_jsonl, write_json
+from ITD_agent.common.scene_profile import scene_profile_from_runtime, scene_profile_from_summary
 from ITD_agent.evaluation_analysis.detail_ranker import summarize_details_csv
 from ITD_agent.finetune_pool.contracts import FinetunePoolSample, PublicDatasetCandidate
 from ITD_agent.finetune_pool.policy import build_finetune_trigger_snapshot, infer_failure_category
@@ -16,85 +16,28 @@ from ITD_agent.planning.scheduler.expert_taxonomy import infer_expert_family_fro
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_FINETUNE_POOL_ROOT = PROJECT_ROOT / "ITD_agent" / "finetune_pool"
+DEFAULT_FINETUNE_POOL_ROOT = PROJECT_ROOT / "outputs" / "ITD_agent_runtime" / "finetune_pool"
+SOURCE_LEGACY_FINETUNE_POOL_ROOT = PROJECT_ROOT / "ITD_agent" / "finetune_pool"
 LEGACY_FINETUNE_POOL_ROOT = PROJECT_ROOT / "ITD_agent" / "ITD_agent" / "finetune_pool"
 
 
-def _append_jsonl(path: Path, payload: dict[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    return str(path)
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-    return str(path)
-
-
-def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except Exception:
-                continue
-    return rows
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
 def _scene_profile(runtime_cfg: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
-    mainline_profile = resolve_mainline_profile(runtime_cfg)
-    capabilities = runtime_cfg.get("_mainline_capabilities") or get_mainline_capabilities(mainline_profile)
-    allow_external_knowledge = bool(capabilities.get("allow_external_knowledge"))
-    allow_public_datasets = bool(capabilities.get("allow_public_datasets"))
-    data_processing = (summary.get("data_processing") or {}).get("processing_summary") or {}
-    input_assessment = (
-        ((summary.get("data_processing") or {}).get("input_assessment") or {})
-        or ((summary.get("evaluation_analysis") or {}).get("input_assessment") or {})
-    )
-    scene_analysis = input_assessment.get("scene_analysis") or {}
-    image_texture_analysis = scene_analysis.get("image_texture_analysis") or {}
-    image_quality_analysis = scene_analysis.get("image_quality_analysis") or {}
-    image_profiles = data_processing.get("image_profiles") or []
-    manifest_summary = ((data_processing.get("metadata") or {}).get("input_manifest_summary") or {})
-    knowledge_profiles = manifest_summary.get("domain_knowledge_items") or []
-    public_profiles = manifest_summary.get("public_datasets") or []
-    image_resolution = None
-    if image_profiles:
-        image_resolution = image_profiles[0].get("resolution_x_m") or image_profiles[0].get("resolution_y_m")
-    return {
-        "mainline_profile": mainline_profile,
-        "input_modalities": (((summary.get("input_manifest") or {}).get("metadata") or {}).get("input_modalities") or {}),
-        "run_name": summary.get("run_name") or runtime_cfg.get("run_name"),
-        "forest_type": runtime_cfg.get("forest_type") or scene_analysis.get("forest_type"),
-        "terrain_type": runtime_cfg.get("terrain_type") if capabilities.get("allow_dem") else None,
-        "image_resolution": image_resolution,
-        "knowledge_profile_types": sorted({str(item.get("normalized_type")) for item in knowledge_profiles if item.get("normalized_type")}) if allow_external_knowledge else [],
-        "public_dataset_roles": sorted({role for item in public_profiles for role in (item.get("usage_roles") or [])}) if allow_public_datasets else [],
-        "stand_condition_labels": ((scene_analysis.get("stand_condition") or {}).get("labels") or []),
-        "texture_labels": image_texture_analysis.get("labels") or [],
-        "image_texture_levels": image_texture_analysis.get("levels") or {},
-        "quality_labels": image_quality_analysis.get("labels") or [],
-        "image_quality_levels": image_quality_analysis.get("levels") or {},
-    }
+    input_manifest = summary.get("input_manifest") or runtime_cfg.get("_input_manifest") or {}
+    if input_manifest:
+        profile = scene_profile_from_summary(summary, input_manifest)
+    else:
+        runtime_like = {
+            **runtime_cfg,
+            "_data_processing_summary": ((summary.get("data_processing") or {}).get("processing_summary") or {}),
+            "_input_assessment": (
+                ((summary.get("data_processing") or {}).get("input_assessment") or {})
+                or ((summary.get("evaluation_analysis") or {}).get("input_assessment") or {})
+            ),
+        }
+        profile = scene_profile_from_runtime(runtime_like)
+    profile["run_name"] = summary.get("run_name") or runtime_cfg.get("run_name")
+    profile["image_resolution"] = profile.get("image_resolution_m")
+    return profile
 
 
 def _common_artifact_refs(runtime_cfg: dict[str, Any], summary: dict[str, Any], details_csv: str | None) -> dict[str, Any]:
@@ -102,7 +45,7 @@ def _common_artifact_refs(runtime_cfg: dict[str, Any], summary: dict[str, Any], 
     final_outputs = summary.get("final_outputs") or {}
     return {
         "input_image": runtime_cfg.get("input_image"),
-        "reference_vector_path": runtime_cfg.get("reference_vector_path") or runtime_cfg.get("inventory_vector_path") or runtime_cfg.get("xiaoban_shp"),
+        "reference_vector_path": reference_vector_path(runtime_cfg),
         "dem_tif": runtime_cfg.get("dem_tif"),
         "details_csv": details_csv,
         "summary_json": summary.get("summary_json"),
@@ -266,9 +209,9 @@ def _build_public_dataset_candidates(summary: dict[str, Any]) -> list[PublicData
 
 
 def _update_indexes(root: Path, samples: list[dict[str, Any]]) -> None:
-    by_failure = _load_json(root / "index" / "by_failure_category.json")
-    by_target = _load_json(root / "index" / "by_target_model.json")
-    by_expert = _load_json(root / "index" / "by_expert_family.json")
+    by_failure = load_json(root / "index" / "by_failure_category.json", default={})
+    by_target = load_json(root / "index" / "by_target_model.json", default={})
+    by_expert = load_json(root / "index" / "by_expert_family.json", default={})
     for item in samples:
         sample_id = str(item.get("sample_id"))
         failure = str(item.get("failure_category") or "uncategorized")
@@ -283,9 +226,9 @@ def _update_indexes(root: Path, samples: list[dict[str, Any]]) -> None:
             by_target[role].append(sample_id)
         if sample_id not in by_expert[expert_family]:
             by_expert[expert_family].append(sample_id)
-    _write_json(root / "index" / "by_failure_category.json", by_failure)
-    _write_json(root / "index" / "by_target_model.json", by_target)
-    _write_json(root / "index" / "by_expert_family.json", by_expert)
+    write_json(root / "index" / "by_failure_category.json", by_failure)
+    write_json(root / "index" / "by_target_model.json", by_target)
+    write_json(root / "index" / "by_expert_family.json", by_expert)
 
 
 def register_finetune_pool_assets(
@@ -315,10 +258,10 @@ def register_finetune_pool_assets(
 
     sample_log = None
     for item in all_samples:
-        sample_log = _append_jsonl(root / "records" / "samples.jsonl", item)
+        sample_log = append_jsonl(root / "records" / "samples.jsonl", item)
     public_log = None
     for item in public_candidates:
-        public_log = _append_jsonl(root / "records" / "public_dataset_candidates.jsonl", item.to_dict())
+        public_log = append_jsonl(root / "records" / "public_dataset_candidates.jsonl", item.to_dict())
 
     snapshot = build_finetune_trigger_snapshot(
         samples=all_samples,
@@ -329,9 +272,9 @@ def register_finetune_pool_assets(
         runtime_cfg=runtime_cfg,
     )
     snapshot_path = root / "records" / "latest_trigger_snapshot.json"
-    _write_json(snapshot_path, snapshot.to_dict())
-    _append_jsonl(root / "records" / "training_triggers.jsonl", snapshot.to_dict())
-    _append_jsonl(
+    write_json(snapshot_path, snapshot.to_dict())
+    append_jsonl(root / "records" / "training_triggers.jsonl", snapshot.to_dict())
+    append_jsonl(
         root / "records" / "clusters.jsonl",
         {
             "timestamp": now_iso,
@@ -353,7 +296,7 @@ def register_finetune_pool_assets(
         "trigger_snapshot": snapshot.to_dict(),
     }
     manifest_path = root / "cases" / f"{run_name}.json"
-    _write_json(manifest_path, manifest_payload)
+    write_json(manifest_path, manifest_payload)
 
     return {
         "finetune_pool_root": str(root),
@@ -394,6 +337,6 @@ def load_recent_failed_cases(
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     path = Path(finetune_pool_root) / "records" / "samples.jsonl"
-    rows = _load_jsonl(path)
+    rows = load_jsonl(path)
     rows = [row for row in rows if row.get("source_type") in {"failed_roi_sample", "hard_case_sample"}]
     return rows[-limit:]

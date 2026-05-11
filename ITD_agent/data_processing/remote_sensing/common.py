@@ -7,6 +7,8 @@ import rasterio
 from affine import Affine
 from rasterio.windows import Window
 
+from ITD_agent.common.values import safe_float
+
 
 def downsample(arr: np.ndarray, max_dim: int = 512) -> np.ndarray:
     if arr.ndim != 2:
@@ -15,15 +17,6 @@ def downsample(arr: np.ndarray, max_dim: int = 512) -> np.ndarray:
     step_y = max(h // max_dim, 1)
     step_x = max(w // max_dim, 1)
     return arr[::step_y, ::step_x]
-
-
-def safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def normalize_to_uint8(arr: np.ndarray, valid_mask: np.ndarray | None = None) -> np.ndarray:

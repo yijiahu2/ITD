@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.data_processing.contracts import ProcessingBlockProfile, TileRunContext
 from ITD_agent.data_processing.remote_sensing.common import (
     as_rgb_uint8,
@@ -12,15 +13,6 @@ from ITD_agent.data_processing.remote_sensing.common import (
     rgb_to_gray_uint8,
     valid_mask_from_data,
 )
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def _axis_tile_windows(size: int, tile_px: int, stride_px: int, snap_last_tile_to_edge: bool) -> list[int]:

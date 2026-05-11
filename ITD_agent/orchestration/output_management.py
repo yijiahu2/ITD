@@ -5,8 +5,6 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
-from ITD_agent.contracts import FinalDeliverables
-from input_layer.mainline_profiles import get_mainline_capabilities, resolve_mainline_profile
 from ITD_agent.finetune_pool import export_finetune_dataset_bundle
 from ITD_agent.finetune_pool.store import register_finetune_pool_assets
 from ITD_agent.memory_store.compact import (
@@ -29,7 +27,7 @@ from ITD_agent.orchestration.runtime_support import (
     remove_path,
     remove_vector_dataset,
 )
-from output_layer.publisher import publish_segmentation_deliverables
+from output_layer.final_outputs import build_final_deliverables
 
 
 RUN_SUMMARY_FILENAME = "ITD_agent_run_summary.json"
@@ -64,10 +62,6 @@ def get_retention_profile(cfg: dict[str, Any]) -> str:
     if profile in {"debug", "minimal", "standard"}:
         return profile
     return "standard"
-
-
-def _resolve_inst_shp(summary: dict[str, Any]) -> str | None:
-    return summary.get("merged_inst_shp") or (summary.get("segmentation_model") or {}).get("y_inst_shp")
 
 
 def _resolve_report_path(summary: dict[str, Any], fallback_dir: Path) -> str | None:
@@ -448,54 +442,19 @@ def finalize_run_outputs(
     publish_root: str | Path | None = None,
 ) -> dict[str, Any]:
     metrics_json = summary.get("metrics_json") or (summary.get("evaluation") or {}).get("metrics_json")
-    details_csv = summary.get("details_csv") or (summary.get("evaluation") or {}).get("details_csv")
-    summary_json = summary.get("summary_json")
-    inst_shp = _resolve_inst_shp(summary)
-    data_processing = summary.get("data_processing") or {}
-    semantic_prior_tif = data_processing.get("m_sem_tif")
-    semantic_prior_png = data_processing.get("m_sem_png")
-    mainline_profile = resolve_mainline_profile(runtime_cfg)
-    capabilities = runtime_cfg.get("_mainline_capabilities") or get_mainline_capabilities(mainline_profile)
-
     default_publish_root = get_persistent_output_dir(runtime_cfg) / "final_outputs"
     publish_dir = Path(publish_root) if publish_root is not None else default_publish_root
     report_path = _resolve_report_path(summary, Path(metrics_json).resolve().parent if metrics_json else publish_dir)
     report_json_path = _resolve_report_json_path(summary, Path(metrics_json).resolve().parent if metrics_json else publish_dir)
 
-    deliverables = publish_segmentation_deliverables(
-        inst_shp=inst_shp,
+    summary["input_manifest"] = input_manifest
+    summary["final_outputs"] = build_final_deliverables(
+        summary=summary,
+        runtime_cfg=runtime_cfg,
         publish_root=publish_dir,
-        semantic_prior_tif=semantic_prior_tif,
-        semantic_prior_png=semantic_prior_png,
         report_path=report_path,
         report_json_path=report_json_path,
-        metrics_json=metrics_json,
-        details_csv=details_csv,
-        summary_json=summary_json,
-        run_name=summary.get("run_name") or runtime_cfg.get("run_name"),
-        background_raster=runtime_cfg.get("input_image"),
-        mainline_profile=mainline_profile,
-        chm_raster=runtime_cfg.get("chm_tif"),
-        enable_height_structure=bool(capabilities.get("output_height_structure")),
     )
-    summary["input_manifest"] = input_manifest
-    summary["final_outputs"] = FinalDeliverables(
-        publish_root=str(publish_dir),
-        tree_crowns_shp=deliverables.get("tree_crowns_shp"),
-        tree_points_shp=deliverables.get("tree_points_shp"),
-        semantic_prior_tif=deliverables.get("semantic_prior_tif"),
-        semantic_prior_png=deliverables.get("semantic_prior_png"),
-        segmentation_visualization_png=deliverables.get("segmentation_visualization_png"),
-        final_evaluation_report_md=deliverables.get("final_evaluation_report_md"),
-        final_evaluation_report_json=deliverables.get("final_evaluation_report_json"),
-        tree_crowns_height_structure_gpkg=deliverables.get("tree_crowns_height_structure_gpkg"),
-        height_structure_summary_json=deliverables.get("height_structure_summary_json"),
-        metadata={
-            "mainline_profile": mainline_profile,
-            "mainline_capabilities": capabilities,
-            "height_structure_summary": deliverables.get("height_structure_summary") or {},
-        },
-    ).to_dict()
     memory_info = record_execution(summary=summary, input_manifest=input_manifest)
     strategy_info = record_success_strategy(summary=summary)
     failure_info = record_failure_pattern(summary=summary)

@@ -9,6 +9,8 @@ import rasterio
 from rasterio import features
 from shapely.geometry import box
 
+from ITD_agent.common.values import safe_float as _safe_float
+
 
 def _equivalent_crown_width(area_m2: float) -> float:
     if area_m2 <= 0:
@@ -20,15 +22,6 @@ def _safe_quantile(values: np.ndarray, q: float) -> float | None:
     if values.size == 0:
         return None
     return float(np.quantile(values, q))
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def _resolve_quality_cfg(quality_cfg: dict[str, Any] | None) -> dict[str, Any]:

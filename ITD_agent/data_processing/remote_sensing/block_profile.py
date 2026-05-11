@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.data_processing.contracts import LogicalBlockPlanEntry, ProcessingBlockProfile
 from ITD_agent.data_processing.remote_sensing.common import (
     as_rgb_uint8,
@@ -16,15 +17,6 @@ from ITD_agent.data_processing.remote_sensing.common import (
 from ITD_agent.data_processing.remote_sensing.policy_templates import select_policy_template
 from ITD_agent.data_processing.remote_sensing.quality import estimate_quality_from_rgb
 from ITD_agent.data_processing.remote_sensing.texture import estimate_texture
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def read_block_rgb_window(working_dom_path: str, block_window: list[int], band_mapping: dict[str, int]) -> tuple[np.ndarray, float | int | None]:

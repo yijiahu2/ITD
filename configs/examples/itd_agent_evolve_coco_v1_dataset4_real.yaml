@@ -32,6 +32,7 @@ main_model:
 
 expert_models:
   execution_mode: real
+  tile_execution: true
 
 model_configs:
   htc:

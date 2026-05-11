@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ITD_agent.common.values import safe_float as _safe_float
+
 
 DEFAULT_POLICY_TEMPLATES: dict[str, dict[str, Any]] = {
     "default": {
@@ -40,15 +42,6 @@ DEFAULT_POLICY_TEMPLATES: dict[str, dict[str, Any]] = {
         "fusion_priority": "normal",
     },
 }
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def infer_expected_failure_modes(block_features: dict[str, Any]) -> list[str]:

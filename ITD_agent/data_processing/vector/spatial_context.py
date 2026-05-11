@@ -27,6 +27,7 @@ import rasterio
 from rasterio.mask import mask
 from shapely.geometry import box
 
+from ITD_agent.common.values import safe_float
 from ITD_agent.data_processing.vector.crown_metrics import standardize_inventory_crown_width
 from ITD_agent.data_processing.terrain.dem_pipeline import generate_terrain_products, summarize_terrain_classes, TerrainRuleConfig
 
@@ -52,17 +53,6 @@ def write_vector_auto(gdf: gpd.GeoDataFrame, out_path: str | Path, layer: Option
     else:
         raise ValueError(f"Unsupported vector output format: {out_path}")
     return str(out_path)
-
-
-def safe_float(v, default=None):
-    try:
-        if v is None:
-            return default
-        if pd.isna(v):
-            return default
-        return float(v)
-    except Exception:
-        return default
 
 
 def load_dom_bounds(dom_tif: str | Path) -> Tuple[Any, Any, Dict[str, float]]:

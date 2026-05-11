@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from ITD_agent.common.values import safe_float as _safe_float
+
 
 def _short_text(value: Any, limit: int = 120) -> str | None:
     text = str(value).strip() if value is not None else ""
@@ -11,15 +13,6 @@ def _short_text(value: Any, limit: int = 120) -> str | None:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
 
 
 def _compact_input_assessment_summary(run_summary: dict[str, Any]) -> dict[str, Any]:

@@ -8,6 +8,7 @@ from ITD_agent.evolution.config_preflight import preflight_evolve_config_v1
 from ITD_agent.evolution.review.finetune_bundle_exporter import export_finetune_bundle
 from ITD_agent.evolution.review.review_runner import run_review_v2
 from ITD_agent.evolution.state.queries import list_pending_reviews, list_review_pending, summarize_review_assets, summarize_state
+from ITD_agent.training_loop.training_runner import run_training_loop_v3
 
 
 def main() -> None:
@@ -44,6 +45,11 @@ def main() -> None:
     finetune_export_parser.add_argument("--review-output-dir", required=True)
     finetune_export_parser.add_argument("--out", required=True)
 
+    train_parser = subparsers.add_parser("train", help="Run V3 controlled training loop.")
+    train_subparsers = train_parser.add_subparsers(dest="train_command", required=True)
+    train_run_parser = train_subparsers.add_parser("run", help="Run V3 controlled training orchestration.")
+    train_run_parser.add_argument("--config", required=True)
+
     args = parser.parse_args()
     if args.command == "evolve-infer":
         payload = run_evolve_infer_v1(args.config)
@@ -57,6 +63,8 @@ def main() -> None:
         payload = summarize_review_assets(args.db, review_run_id=args.review_run_id)
     elif args.command == "finetune-pool" and args.finetune_command == "export":
         payload = export_finetune_bundle(review_output_dir=args.review_output_dir, out_dir=args.out)
+    elif args.command == "train" and args.train_command == "run":
+        payload = run_training_loop_v3(args.config)
     elif args.state_command == "summary":
         payload = summarize_state(args.db)
     else:

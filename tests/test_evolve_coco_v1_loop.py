@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ITD_agent.evolution.evolve_infer_runner import run_evolve_infer_v1
+from ITD_agent.evolution.expert.tile_image import offset_instances_to_full_image
 from ITD_agent.evolution.fusion.local_roi_fusion import fuse_or_rollback
 from ITD_agent.evolution.roi.roi_candidate_builder import build_roi_candidates
 from ITD_agent.evolution.state.queries import list_pending_reviews, summarize_state
@@ -139,6 +140,16 @@ def test_expert_routing_policy_supports_primary_expert_map() -> None:
     assert route_expert_model("over_segmentation", policy)["expert_model"] == "mask2former"
     assert route_expert_model("false_positive", policy)["expert_model"] == "cascade_mask_rcnn"
     assert route_expert_model("false_negative", policy)["expert_model"] == "maskdino"
+
+
+def test_expert_tile_instances_are_offset_back_to_full_image() -> None:
+    adjusted = offset_instances_to_full_image(
+        [{"id": "tile_pred", "bbox": [10, 20, 30, 40], "score": 0.9}],
+        [100, 200],
+    )
+
+    assert adjusted[0]["bbox"] == [110.0, 220.0, 30, 40]
+    assert adjusted[0]["tile_offset_xy"] == [100.0, 200.0]
 
 
 def test_evolve_infer_v1_runs_mock_expert_writes_trajectory_state_and_training_candidates(tmp_path: Path) -> None:

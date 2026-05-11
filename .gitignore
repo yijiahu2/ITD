@@ -39,3 +39,11 @@ cache/
 
 .env
 .venv/
+
+# ITD agent runtime state. Source code reads these legacy paths for backward
+# compatibility, but new writes go under outputs/ITD_agent_runtime/.
+ITD_agent/memory_store/records/
+ITD_agent/memory_store/index/
+ITD_agent/finetune_pool/records/
+ITD_agent/finetune_pool/index/
+ITD_agent/finetune_pool/cases/

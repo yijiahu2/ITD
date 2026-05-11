@@ -6,16 +6,8 @@ from typing import Any
 import pandas as pd
 from pandas.errors import EmptyDataError
 
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.segmentation.finetuning.io_utils import normalize_details_df
-
-
-def _safe_float(v: Any) -> float | None:
-    try:
-        if pd.isna(v):
-            return None
-        return float(v)
-    except Exception:
-        return None
 
 
 def summarize_details_csv(

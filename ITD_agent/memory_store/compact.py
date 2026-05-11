@@ -3,14 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
+from ITD_agent.common.values import safe_float
 
 
 def _copy_selected(source: dict[str, Any] | None, keys: list[str]) -> dict[str, Any]:
@@ -283,7 +276,7 @@ def compact_evaluation_summary(evaluation_summary: dict[str, Any] | None) -> dic
     metrics = evaluation_summary.get("metrics") or {}
     return {
         "metrics": deepcopy(metrics),
-        "score": _safe_float(metrics.get("score")),
+        "score": safe_float(metrics.get("score")),
         "final_evaluation": _copy_selected(
             final_evaluation,
             ["status", "score", "ap50", "ap75", "mean_iou", "f1_score"],

@@ -129,6 +129,7 @@ def test_review_v2_consolidates_v1_run_assets_and_blocks_v3_actions(tmp_path: Pa
     assert report["asset_counts"]["finetune_samples"] >= 1
     assert report["asset_counts"]["routing_candidates"] >= 1
     assert report["asset_counts"]["distillation_candidates"] >= 1
+    assert report["guardrail_blocks"] >= 5
 
     review_dir = Path(report["output_dir"])
     trajectory_id = v1_summary["trajectories"][0]["trajectory_id"]

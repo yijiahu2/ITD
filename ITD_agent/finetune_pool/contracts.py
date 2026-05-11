@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
+from ITD_agent.common.serialization import DataclassDictMixin
 from ITD_agent.model_roles import normalize_model_role
 
 
 @dataclass
-class FinetunePoolSample:
+class FinetunePoolSample(DataclassDictMixin):
     sample_id: str
     run_name: str
     timestamp: str
@@ -27,12 +28,10 @@ class FinetunePoolSample:
     def __post_init__(self) -> None:
         self.target_model_role = normalize_model_role(self.target_model_role)
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass
-class PublicDatasetCandidate:
+class PublicDatasetCandidate(DataclassDictMixin):
     candidate_id: str
     dataset_id: str
     dataset_name: str
@@ -53,12 +52,10 @@ class PublicDatasetCandidate:
     def __post_init__(self) -> None:
         self.target_model_role = normalize_model_role(self.target_model_role)
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass
-class FinetunePoolCluster:
+class FinetunePoolCluster(DataclassDictMixin):
     cluster_id: str
     target_model_role: str
     failure_category: str
@@ -75,12 +72,10 @@ class FinetunePoolCluster:
     def __post_init__(self) -> None:
         self.target_model_role = normalize_model_role(self.target_model_role)
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass
-class FinetuneTriggerSnapshot:
+class FinetuneTriggerSnapshot(DataclassDictMixin):
     timestamp: str
     run_name: str
     trigger_ready: bool
@@ -98,6 +93,3 @@ class FinetuneTriggerSnapshot:
     def __post_init__(self) -> None:
         if self.recommended_target_model_role is not None:
             self.recommended_target_model_role = normalize_model_role(self.recommended_target_model_role)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)

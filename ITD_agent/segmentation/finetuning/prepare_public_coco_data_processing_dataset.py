@@ -11,6 +11,14 @@ from PIL import Image
 from pycocotools import mask as mask_utils
 
 from ITD_agent.segmentation.finetuning.io_utils import dump_json, load_yaml
+from ITD_agent.segmentation.coco_utils import (
+    build_image_index as _build_image_index,
+    load_merged_coco as _load_merged_coco,
+    normalize_split_mapping as _normalize_split_mapping,
+    normalize_str_list as _normalize_str_list,
+    resolve_image_path as _resolve_image_path,
+    segmentation_to_rle as _segmentation_to_rle,
+)
 from ITD_agent.segmentation.finetuning.prepare_data_processing_external_dataset import (
     _binary_mask_to_coco_annotation,
     _build_coco_split,
@@ -18,124 +26,6 @@ from ITD_agent.segmentation.finetuning.prepare_data_processing_external_dataset 
     _read_image_rgb_uint8,
     _save_mask_png,
 )
-
-
-VALID_IMAGE_SUFFIXES = {".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"}
-
-
-def _normalize_str_list(value: Any, default: list[str]) -> list[str]:
-    if value is None:
-        return default
-    if isinstance(value, str):
-        return [x.strip() for x in value.split(",") if x.strip()]
-    if isinstance(value, (list, tuple)):
-        return [str(x).strip() for x in value if str(x).strip()]
-    return default
-
-
-def _normalize_split_mapping(raw: Any) -> dict[str, str]:
-    mapping = {
-        "train": "Training_set",
-        "val": "Validation_set",
-        "validation": "Validation_set",
-        "test": "Testing_set",
-    }
-    if isinstance(raw, dict):
-        for key, value in raw.items():
-            mapping[str(key)] = str(value)
-    return mapping
-
-
-def _collect_coco_jsons(annotation_path: Path) -> list[Path]:
-    if annotation_path.is_file() and annotation_path.suffix.lower() == ".json":
-        return [annotation_path]
-    if not annotation_path.exists():
-        return []
-    if annotation_path.is_dir():
-        return sorted(p for p in annotation_path.iterdir() if p.is_file() and p.suffix.lower() == ".json")
-    return []
-
-
-def _load_merged_coco(annotation_path: Path) -> dict[str, Any]:
-    json_paths = _collect_coco_jsons(annotation_path)
-    if not json_paths:
-        raise FileNotFoundError(f"未找到 COCO 标注 json: {annotation_path}")
-
-    merged_images: list[dict[str, Any]] = []
-    merged_annotations: list[dict[str, Any]] = []
-    categories: list[dict[str, Any]] = []
-    next_image_id = 1
-    next_ann_id = 1
-
-    for json_path in json_paths:
-        with open(json_path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-
-        local_to_global: dict[int, int] = {}
-        for image in payload.get("images", []):
-            image_copy = dict(image)
-            old_id = int(image_copy["id"])
-            image_copy["id"] = next_image_id
-            local_to_global[old_id] = next_image_id
-            merged_images.append(image_copy)
-            next_image_id += 1
-
-        for ann in payload.get("annotations", []):
-            ann_copy = dict(ann)
-            ann_copy["id"] = next_ann_id
-            ann_copy["image_id"] = local_to_global[int(ann_copy["image_id"])]
-            merged_annotations.append(ann_copy)
-            next_ann_id += 1
-
-        if not categories and payload.get("categories"):
-            categories = payload["categories"]
-
-    return {
-        "images": merged_images,
-        "annotations": merged_annotations,
-        "categories": categories,
-    }
-
-
-def _build_image_index(image_dir: Path) -> tuple[dict[str, Path], dict[str, Path]]:
-    by_name: dict[str, Path] = {}
-    by_stem: dict[str, Path] = {}
-    for path in sorted(image_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in VALID_IMAGE_SUFFIXES:
-            continue
-        by_name[path.name] = path
-        by_stem.setdefault(path.stem, path)
-    return by_name, by_stem
-
-
-def _resolve_image_path(file_name: str, by_name: dict[str, Path], by_stem: dict[str, Path], image_dir: Path) -> Path:
-    candidate = image_dir / file_name
-    if candidate.exists():
-        return candidate
-
-    file_basename = Path(file_name).name
-    if file_basename in by_name:
-        return by_name[file_basename]
-
-    stem = Path(file_name).stem
-    if stem in by_stem:
-        return by_stem[stem]
-
-    raise FileNotFoundError(f"找不到与 COCO file_name 对应的图像: {file_name}")
-
-
-def _segmentation_to_rle(segmentation: Any, height: int, width: int) -> dict[str, Any]:
-    if isinstance(segmentation, list):
-        rles = mask_utils.frPyObjects(segmentation, height, width)
-        return mask_utils.merge(rles)
-
-    if isinstance(segmentation, dict):
-        counts = segmentation.get("counts")
-        if isinstance(counts, list):
-            return mask_utils.frPyObjects(segmentation, height, width)
-        return segmentation
-
-    raise ValueError(f"Unsupported segmentation type: {type(segmentation)}")
 
 
 def _decode_union_mask(annotations: list[dict[str, Any]], height: int, width: int) -> np.ndarray:

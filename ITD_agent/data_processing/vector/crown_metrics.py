@@ -3,16 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import pandas as pd
-
-
-def safe_float(v: Any, default: float | None = None) -> float | None:
-    try:
-        if v is None or pd.isna(v):
-            return default
-        return float(v)
-    except Exception:
-        return default
+from ITD_agent.common.values import safe_float
 
 
 def equivalent_crown_width(area_m2: float | None) -> float:

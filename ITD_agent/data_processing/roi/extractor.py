@@ -15,6 +15,7 @@ from rasterio.warp import reproject
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
+from ITD_agent.common.values import safe_float as _safe_float
 from ITD_agent.data_processing.vector import (
     crop_raster_to_geometry,
     enrich_xiaoban_clip_fields,
@@ -51,15 +52,6 @@ def _metric_crs(gdf: gpd.GeoDataFrame):
         return gdf.crs
     utm = gdf.estimate_utm_crs()
     return utm if utm is not None else "EPSG:3857"
-
-
-def _safe_float(value: Any, default: float | None = None) -> float | None:
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except Exception:
-        return default
 
 
 def _normalize_closure(value: Any) -> float | None:

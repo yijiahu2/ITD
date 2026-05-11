@@ -12,7 +12,9 @@ from ITD_agent.finetune_pool.review.io_utils import load_structured, write_csv, 
 from ITD_agent.finetune_pool.dataset_exporter import export_finetune_dataset_bundle
 from ITD_agent.training_loop.dom_only_geometry_guard import evaluate_dom_only_geometry_guard
 from ITD_agent.training_loop.contracts import TrainingTriggerContext
+from ITD_agent.training_loop.data_synthesis import synthesize_training_samples
 from ITD_agent.training_loop.expert_to_main_distill import build_expert_to_main_distillation_manifest
+from ITD_agent.training_loop.evolution_feedback import write_training_evolution_feedback
 from ITD_agent.training_loop.family_config_resolver import resolve_family_training_config
 from ITD_agent.training_loop.model_capability_profile import build_model_capability_profile
 from ITD_agent.training_loop.model_promotion import decide_model_promotion, status_for_registry
@@ -78,8 +80,14 @@ def run_training_loop(config_path: str) -> dict[str, Any]:
     write_json(output_dir / "trigger" / "trigger_decision.json", trigger_decision)
     write_json(output_dir / "trigger" / "trigger_report.json", {"family_config": family_cfg, "decision": trigger_decision})
 
-    dataset_bundle = materialize_training_dataset_bundle(
+    synthesis = synthesize_training_samples(
         accepted_samples=quality["accepted_samples"],
+        cfg=((cfg.get("training") or {}).get("data_synthesis") or {}),
+        output_dir=output_dir,
+    )
+    training_samples = quality["accepted_samples"] + synthesis["synthetic_samples"]
+    dataset_bundle = materialize_training_dataset_bundle(
+        accepted_samples=training_samples,
         replay_samples=replay_samples,
         output_dir=output_dir,
         dataset_cfg=cfg.get("dataset") or {},
@@ -103,6 +111,7 @@ def run_training_loop(config_path: str) -> dict[str, Any]:
     capability_profile = None
     routing_candidate_report = None
     feedback_report = None
+    evolution_feedback_report = None
     model_record = None
     if trigger_decision["decision"] == "approve_pilot":
         plan = build_training_plan(
@@ -220,7 +229,6 @@ def run_training_loop(config_path: str) -> dict[str, Any]:
             capability_profile=capability_profile,
             output_dir=output_dir,
         )
-
     distillation_report = build_expert_to_main_distillation_manifest(
         distillation_candidates=list(review_assets.get("distillation_candidates") or []),
         output_dir=output_dir,
@@ -251,7 +259,10 @@ def run_training_loop(config_path: str) -> dict[str, Any]:
         "distillation_report": distillation_report,
         "routing_candidate_report": routing_candidate_report,
         "training_feedback_report": feedback_report,
+        "evolution_feedback_report": evolution_feedback_report,
     }
+    evolution_feedback_report = write_training_evolution_feedback(training_summary=summary, output_dir=output_dir)
+    summary["evolution_feedback_report"] = evolution_feedback_report
     write_json(output_dir / "reports" / "training_summary.json", summary)
     write_csv(output_dir / "reports" / "training_summary.csv", [_flatten_summary(summary)])
     return summary

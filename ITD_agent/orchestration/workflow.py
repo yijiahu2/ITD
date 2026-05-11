@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from ITD_agent.orchestration.evolution_workflow import run_controlled_evolution
 from ITD_agent.orchestration.run_context import build_config_context, build_export_context, build_state_context
 from ITD_agent.orchestration.stage_runner import (
     export_review_bundle,
@@ -33,6 +34,7 @@ class WorkflowResult:
 
 def run_workflow(command: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
     commands = {
+        "evolve": evolve,
         "run": run,
         "adaptive-inference": adaptive_inference,
         "review": review,
@@ -47,6 +49,10 @@ def run_workflow(command: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
 
 def run_stage(command: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
     return run_workflow(command, *args, **kwargs)
+
+
+def evolve(config_path: str | Path) -> dict[str, Any]:
+    return run_controlled_evolution(str(config_path))
 
 
 def run(config_path: str | Path) -> dict[str, Any]:

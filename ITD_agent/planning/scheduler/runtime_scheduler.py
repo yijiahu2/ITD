@@ -22,6 +22,8 @@ from ITD_agent.planning.scheduler.expert_taxonomy import (
     load_expert_taxonomy,
     resolve_expert_template_path,
 )
+from ITD_agent.parameter_engine.expert_search_space import get_expert_model_search_space
+from ITD_agent.parameter_engine.space_shrinker import shrink_search_space_with_skill
 from ITD_agent.planning.scheduler.template_manager import apply_parameter_updates
 
 
@@ -805,6 +807,21 @@ def _build_expert_model_call_plan(
     plan["global_candidate_profiles"] = route.get("global_candidate_profiles") or []
     plan["selection_reason"] = selection_reason
     plan["routing_context"] = routing_context
+    preferred_algorithm = str(
+        (route.get("preferred_profile") or {}).get("algorithm")
+        or (route.get("preferred_profile") or {}).get("name")
+        or ""
+    ).strip().lower()
+    if preferred_algorithm:
+        try:
+            base_space = get_expert_model_search_space(preferred_algorithm)
+            plan["parameter_search_space"] = shrink_search_space_with_skill(
+                base_space=base_space,
+                skill_context=scheduler_context.get("skill_context") or {},
+                failure_family=str(preferred_expert_family) if preferred_expert_family else None,
+            )
+        except KeyError:
+            pass
     return plan
 
 
@@ -1215,6 +1232,9 @@ def build_main_model_planning_runtime_cfg(
     plan_cfg["_input_assessment"] = input_assessment
     plan_cfg["_input_manifest"] = input_manifest
     plan_cfg["_data_processing_summary"] = data_processing_summary
+    output_dir = Path(str(plan_cfg.get("output_dir") or "."))
+    plan_cfg["state_db_path"] = str(output_dir / "state.sqlite")
+    plan_cfg["review_output_dir"] = str(output_dir / "review")
     return plan_cfg
 
 
@@ -1234,4 +1254,7 @@ def build_expert_model_planning_runtime_cfg(
     plan_cfg["_data_processing_summary"] = data_processing_summary
     plan_cfg["_roi_assessment"] = roi_assessment
     plan_cfg["_previous_round_summary"] = previous_round_summary
+    output_dir = Path(str(plan_cfg.get("output_dir") or "."))
+    plan_cfg["state_db_path"] = str(output_dir / "state.sqlite")
+    plan_cfg["review_output_dir"] = str(output_dir / "review")
     return plan_cfg

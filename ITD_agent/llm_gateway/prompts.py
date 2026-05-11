@@ -227,6 +227,10 @@ def _compact_scheduler_context(scheduler_context: dict[str, Any]) -> dict[str, A
         "scene_similar_memory_context": _compact_memory_rows(scheduler_context.get("scene_similar_memory_context"), limit=3),
         "failure_pattern_context": _compact_memory_rows(scheduler_context.get("failure_pattern_context"), limit=3),
         "finetune_pool_recent_cases": _compact_recent_failed_cases(scheduler_context.get("finetune_pool_recent_cases"), limit=3),
+        "skill_context": {
+            "matched_skill_count": int((scheduler_context.get("skill_context") or {}).get("matched_skill_count") or 0),
+            "matched_skills": _take_list((scheduler_context.get("skill_context") or {}).get("matched_skills"), 3),
+        },
     }
 
 

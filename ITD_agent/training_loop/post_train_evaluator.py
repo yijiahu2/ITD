@@ -9,6 +9,8 @@ from typing import Any
 from ITD_agent.evaluation_analysis.finetune_effect_assessment import compare_finetune_effect
 from ITD_agent.finetune_pool.review.io_utils import write_json
 from ITD_agent.training_loop.contracts import TrainingRunResult
+from ITD_agent.training_loop.error_type_evaluator import compute_error_type_delta
+from ITD_agent.training_loop.geometry_delta_evaluator import compute_geometry_delta
 
 
 def run_post_train_evaluation(
@@ -54,15 +56,30 @@ def run_post_train_evaluation(
         delta = effect
     else:
         effect = {"status": "skipped", "reason": "before_csv/after_csv not configured"}
+    error_type_delta = {"status": "skipped", "reason": "missing_baseline_or_candidate_error_metrics"}
+    geometry_delta = {"status": "skipped", "reason": "missing_baseline_or_candidate_error_metrics"}
+    baseline_error_metrics = eval_cfg.get("baseline_error_metrics") or {}
+    candidate_error_metrics = eval_cfg.get("candidate_error_metrics") or {}
+    if baseline_error_metrics or candidate_error_metrics:
+        error_type_delta = compute_error_type_delta(
+            baseline_errors=baseline_error_metrics,
+            candidate_errors=candidate_error_metrics,
+        )
+    if baseline_metrics and candidate_metrics:
+        geometry_delta = compute_geometry_delta(
+            baseline_metrics=baseline_metrics,
+            candidate_metrics=candidate_metrics,
+        )
+
     paths = {
         "baseline_eval": write_json(eval_dir / "baseline_eval.json", baseline),
         "candidate_eval": write_json(eval_dir / "candidate_eval.json", candidate),
         "delta_eval": write_json(eval_dir / "delta_eval.json", delta),
-        "error_type_delta": write_json(eval_dir / "error_type_delta.json", {"status": "skipped", "reason": "no candidate predictions configured"}),
-        "geometry_delta": write_json(eval_dir / "geometry_delta.json", {"status": "skipped", "reason": "no geometry eval artifacts configured"}),
+        "error_type_delta": write_json(eval_dir / "error_type_delta.json", error_type_delta),
+        "geometry_delta": write_json(eval_dir / "geometry_delta.json", geometry_delta),
         "finetune_effect_assessment": write_json(eval_dir / "finetune_effect_assessment.json", effect),
     }
-    return {"baseline": baseline, "candidate": candidate, "delta": delta, "effect": effect, "paths": paths}
+    return {"baseline": baseline, "candidate": candidate, "delta": delta, "error_type_delta": error_type_delta, "geometry_delta": geometry_delta, "effect": effect, "paths": paths}
 
 
 def _run_candidate_eval_if_requested(*, cfg: dict[str, Any], training_result: TrainingRunResult) -> dict[str, Any] | None:
@@ -152,11 +169,25 @@ def _extract_metric_dict(payload: dict[str, Any]) -> dict[str, float]:
         "coco/segm_mAP_75": "ap75",
         "segm_mAP_75": "ap75",
     }
+    accepted_keys = {
+        "ap_50_95",
+        "bbox_ap",
+        "ap50",
+        "ap75",
+        "precision",
+        "recall",
+        "target_error_rate",
+        "target_error_delta",
+        "tree_count_error_ratio",
+        "mean_crown_width_error_ratio",
+        "closure_error_abs",
+        "density_error_abs",
+    }
     out: dict[str, float] = {}
     for candidate in candidates:
         for raw_key, raw_value in candidate.items():
             key = aliases.get(str(raw_key), str(raw_key))
-            if key not in {"ap_50_95", "bbox_ap", "ap50", "ap75", "precision", "recall", "target_error_rate", "target_error_delta"}:
+            if key not in accepted_keys:
                 continue
             try:
                 out[key] = float(raw_value)

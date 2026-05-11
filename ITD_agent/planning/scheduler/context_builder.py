@@ -15,6 +15,8 @@ from ITD_agent.memory_store.query import (
     load_recent_success_strategies,
     load_scene_similar_memories,
 )
+from ITD_agent.skill_store.matcher import match_skill_context
+from ITD_agent.skill_store.query import load_skill_records
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
@@ -261,6 +263,20 @@ def build_scheduler_context(
     scene_profile = infer_scene_profile_from_runtime(runtime_cfg)
     terrain_analysis = ((runtime_cfg.get("_input_assessment") or {}).get("scene_analysis") or {}).get("terrain_analysis") or {}
     data_processing_summary = runtime_cfg.get("_data_processing_summary") or {}
+    failure_pattern_context = load_recent_failure_patterns(limit=recent_failure_limit) if allow_memory_context else []
+    skill_records = load_skill_records(
+        db_path=runtime_cfg.get("state_db_path"),
+        review_output_dir=runtime_cfg.get("review_output_dir"),
+        statuses=["draft", "shadow", "active"],
+        limit=50,
+    ) if allow_memory_context else []
+    skill_context = match_skill_context(
+        skills=skill_records,
+        scene_profile=scene_profile,
+        evaluation_metrics=metrics,
+        roi_assessment=runtime_cfg.get("_roi_assessment") or {},
+        failure_pattern_context=failure_pattern_context,
+    ) if allow_memory_context else {"matched_skill_count": 0, "matched_skills": [], "application_mode": "context_only_readonly_suggestion"}
 
     return {
         "mainline_profile": mainline_profile,
@@ -301,7 +317,7 @@ def build_scheduler_context(
         "knowledge_profiles": (_input_manifest_summary(data_processing_summary).get("domain_knowledge_items") or []) if allow_external_knowledge else [],
         "public_dataset_profiles": (_input_manifest_summary(data_processing_summary).get("public_datasets") or []) if allow_public_datasets else [],
         "memory_store_context": load_recent_success_strategies(limit=recent_success_limit) if allow_memory_context else [],
-        "failure_pattern_context": load_recent_failure_patterns(limit=recent_failure_limit) if allow_memory_context else [],
+        "failure_pattern_context": failure_pattern_context,
         "execution_trace_context": load_recent_execution_traces(limit=recent_success_limit) if allow_memory_context else [],
         "scene_similar_memory_context": load_scene_similar_memories(
             scene_profile=scene_profile,
@@ -309,4 +325,5 @@ def build_scheduler_context(
         ) if allow_memory_context else [],
         "finetune_pool_context": load_finetune_pool_snapshot() if allow_finetune_pool_context else [],
         "finetune_pool_recent_cases": load_recent_failed_cases(limit=recent_failure_limit) if allow_finetune_pool_context else [],
+        "skill_context": skill_context,
     }

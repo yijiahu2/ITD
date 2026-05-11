@@ -126,10 +126,6 @@ def compact_expert_model_call_plan(plan: dict[str, Any] | None) -> dict[str, Any
     return compacted
 
 
-def compact_expert_model_call_plan(plan: dict[str, Any] | None) -> dict[str, Any]:
-    return compact_expert_model_call_plan(plan)
-
-
 def compact_knowledge_embedding_plan(plan: dict[str, Any] | None) -> dict[str, Any]:
     plan = plan or {}
     if not isinstance(plan, dict):

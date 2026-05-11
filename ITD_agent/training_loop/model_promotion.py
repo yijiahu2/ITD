@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ITD_agent.evolution.review.io_utils import write_json
+from ITD_agent.finetune_pool.review.io_utils import write_json
 from ITD_agent.training_loop.contracts import TrainingRunResult
 
 
@@ -53,7 +53,7 @@ def decide_model_promotion(
         "evaluation_delta": evaluation.get("delta") or {},
         "blocked_actions": ["promote_to_active", "replace_active_model", "update_active_route_map"],
         "next_recommended_actions": [
-            "run shadow comparison in next V1 evolve-infer",
+            "run shadow comparison in the next adaptive inference run",
             "review routing_update_candidate manually",
             "collect more replay and DOM-only geometry samples before active promotion",
         ],

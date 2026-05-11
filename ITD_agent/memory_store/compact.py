@@ -108,7 +108,7 @@ def compact_roi_refine_plan(plan: dict[str, Any] | None) -> dict[str, Any]:
         plan,
         ["enabled", "use_llm", "max_rounds", "top_k", "buffer_m", "strategy_mode", "preferred_expert_model"],
     )
-    compacted["candidate_expert_models"] = _limit_list(plan.get("candidate_expert_models") or plan.get("candidate_child_models") or [], limit=5)
+    compacted["candidate_expert_models"] = _limit_list(plan.get("candidate_expert_models") or [], limit=5)
     compacted["selection_rules"] = _limit_list(plan.get("selection_rules") or [], limit=4)
     compacted["stop_rules"] = _limit_list(plan.get("stop_rules") or [], limit=4)
     return compacted
@@ -126,7 +126,7 @@ def compact_expert_model_call_plan(plan: dict[str, Any] | None) -> dict[str, Any
     return compacted
 
 
-def compact_child_model_call_plan(plan: dict[str, Any] | None) -> dict[str, Any]:
+def compact_expert_model_call_plan(plan: dict[str, Any] | None) -> dict[str, Any]:
     return compact_expert_model_call_plan(plan)
 
 
@@ -198,7 +198,7 @@ def compact_plan_snapshot(plan: dict[str, Any] | None) -> dict[str, Any]:
         "llm_gateway_result": compact_gateway_trace(plan.get("llm_gateway_result") or {}),
         "runtime_plan": compact_runtime_plan(plan.get("runtime_plan") or {}),
         "roi_refine_plan": compact_roi_refine_plan(plan.get("roi_refine_plan") or {}),
-        "expert_model_call_plan": compact_expert_model_call_plan(plan.get("expert_model_call_plan") or plan.get("child_model_call_plan") or {}),
+        "expert_model_call_plan": compact_expert_model_call_plan(plan.get("expert_model_call_plan") or plan.get("expert_model_call_plan") or {}),
         "knowledge_embedding_plan": compact_knowledge_embedding_plan(plan.get("knowledge_embedding_plan") or {}),
         "finetune_training_plan": compact_finetune_training_plan(plan.get("finetune_training_plan") or {}),
         "scheduler_context": compact_scheduler_context(plan.get("scheduler_context") or {}),
@@ -220,7 +220,7 @@ def compact_planning_summary(planning_summary: dict[str, Any] | None) -> dict[st
                 "parameter_updates": deepcopy(item.get("parameter_updates") or {}),
                 "runtime_plan": compact_runtime_plan(item.get("runtime_plan") or {}),
                 "roi_refine_plan": compact_roi_refine_plan(item.get("roi_refine_plan") or {}),
-                "expert_model_call_plan": compact_expert_model_call_plan(item.get("expert_model_call_plan") or item.get("child_model_call_plan") or {}),
+                "expert_model_call_plan": compact_expert_model_call_plan(item.get("expert_model_call_plan") or item.get("expert_model_call_plan") or {}),
                 "accepted": item.get("accepted"),
                 "acceptance_reason": item.get("acceptance_reason"),
                 "candidate_score": item.get("candidate_score"),

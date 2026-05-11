@@ -12,7 +12,7 @@ from ITD_agent.training_loop.contracts import TrainingRunResult
 from ITD_agent.training_loop.post_train_evaluator import run_post_train_evaluation
 from ITD_agent.training_loop.replay_guard import evaluate_replay_guard
 from ITD_agent.training_loop.training_runner import _should_run_formal_training
-from ITD_agent.training_loop.training_runner import run_training_loop_v3
+from ITD_agent.training_loop.training_runner import run_training_loop
 
 
 def _write_json(path: Path, payload: object) -> Path:
@@ -26,8 +26,8 @@ def _append_jsonl(path: Path, payloads: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in payloads) + "\n", encoding="utf-8")
 
 
-def test_training_v3_builds_controlled_pilot_from_v2_assets(tmp_path: Path) -> None:
-    review_dir = tmp_path / "v2_review"
+def test_training_loop_builds_controlled_pilot_from_review_assets(tmp_path: Path) -> None:
+    review_dir = tmp_path / "review"
     sample_dir = review_dir / "finetune_pool" / "samples" / "sample_traincand_1"
     image = sample_dir / "image.png"
     gt_mask = sample_dir / "gt_mask.json"
@@ -83,8 +83,8 @@ def test_training_v3_builds_controlled_pilot_from_v2_assets(tmp_path: Path) -> N
         tmp_path / "v3_config.json",
         {
             "version": "v3",
-            "mode": "controlled_training_v3",
-            "source": {"run_id": "run_fixture", "v2_review_dir": str(review_dir)},
+            "mode": "controlled_training",
+            "source": {"run_id": "run_fixture", "review_asset_dir": str(review_dir)},
             "target": {
                 "target_model_role": "expert_model",
                 "target_model_id": "maskdino_official",
@@ -104,7 +104,7 @@ def test_training_v3_builds_controlled_pilot_from_v2_assets(tmp_path: Path) -> N
                 "max_single_trajectory_ratio": 1.0,
             },
             "training": {"pilot": {"enabled": True, "override_epochs": 1, "build_only": True}},
-            "runner": {"output_dir": str(tmp_path / "v3_training"), "execute_training": False},
+            "runner": {"output_dir": str(tmp_path / "controlled_training"), "execute_training": False},
             "evaluation": {"run_replay_guard": True},
             "dom_only_geometry_guard": {"enabled": True},
             "capability_profile": {"enabled": True},
@@ -123,7 +123,7 @@ def test_training_v3_builds_controlled_pilot_from_v2_assets(tmp_path: Path) -> N
         },
     )
 
-    summary = run_training_loop_v3(str(cfg_path))
+    summary = run_training_loop(str(cfg_path))
 
     out_dir = Path(summary["output_dir"])
     assert summary["trigger_decision"]["decision"] == "approve_pilot"

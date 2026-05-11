@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     sha256 TEXT
 );
 
-CREATE TABLE IF NOT EXISTS v2_review_runs (
+CREATE TABLE IF NOT EXISTS review_runs (
     review_run_id TEXT PRIMARY KEY,
     source_run_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS distillation_candidates (
     created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS v2_review_events (
+CREATE TABLE IF NOT EXISTS review_events (
     review_event_id TEXT PRIMARY KEY,
     review_run_id TEXT NOT NULL,
     source_run_id TEXT NOT NULL,
@@ -200,6 +200,7 @@ CREATE TABLE IF NOT EXISTS v2_review_events (
     error_json TEXT,
     created_at TEXT NOT NULL
 );
+
 """
 
 

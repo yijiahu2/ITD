@@ -17,21 +17,21 @@ SUMMARY_TABLES = [
     "artifacts",
 ]
 
-V2_SUMMARY_TABLES = [
-    "v2_review_runs",
+REVIEW_SUMMARY_TABLES = [
+    "review_runs",
     "memory_records",
     "skill_records",
     "finetune_samples",
     "routing_candidates",
     "distillation_candidates",
-    "v2_review_events",
+    "review_events",
 ]
 
 
 def summarize_state(db_path: str | Path) -> dict[str, Any]:
     with sqlite3.connect(db_path) as conn:
         counts = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in SUMMARY_TABLES}
-        for table in V2_SUMMARY_TABLES:
+        for table in REVIEW_SUMMARY_TABLES:
             try:
                 counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             except sqlite3.OperationalError:
@@ -66,11 +66,11 @@ def summarize_review_assets(db_path: str | Path, review_run_id: str | None = Non
         for table in ["memory_records", "skill_records", "finetune_samples", "routing_candidates", "distillation_candidates"]:
             counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         review_counts = conn.execute(
-            f"SELECT decision, COUNT(*) AS count FROM v2_review_events{where} GROUP BY decision",
+            f"SELECT decision, COUNT(*) AS count FROM review_events{where} GROUP BY decision",
             params,
         ).fetchall()
         latest = conn.execute(
-            "SELECT review_run_id, source_run_id, created_at, status, output_dir FROM v2_review_runs ORDER BY created_at DESC LIMIT 1"
+            "SELECT review_run_id, source_run_id, created_at, status, output_dir FROM review_runs ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
     latest_dict = dict(latest) if latest else None
     latest_report = None
@@ -97,7 +97,7 @@ def list_review_pending(db_path: str | Path, limit: int = 50) -> dict[str, Any]:
             """
             SELECT review_event_id, review_run_id, source_trajectory_id, candidate_id,
                    candidate_type, review_type, decision, reason
-            FROM v2_review_events
+            FROM review_events
             WHERE decision IN ('defer', 'need_human_review', 'reject')
             ORDER BY created_at DESC
             LIMIT ?

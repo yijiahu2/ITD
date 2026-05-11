@@ -56,9 +56,9 @@ def _get_adaptive_generation_block(cfg: dict[str, Any]) -> dict[str, Any]:
     return (_get_planning_block(cfg).get("adaptive_generation") or {})
 
 
-def _get_child_model_routing_block(cfg: dict[str, Any]) -> dict[str, Any]:
+def _get_expert_model_routing_block(cfg: dict[str, Any]) -> dict[str, Any]:
     planning_cfg = _get_planning_block(cfg)
-    return (planning_cfg.get("expert_model_routing") or planning_cfg.get("child_model_routing") or {})
+    return (planning_cfg.get("expert_model_routing") or planning_cfg.get("expert_model_routing") or {})
 
 
 def _get_pipeline_block(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -120,10 +120,10 @@ def _get_model_entry_name(entry: dict[str, Any]) -> str | None:
     return None
 
 
-def _extract_child_model_entries(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+def _extract_expert_model_entries(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     seg_models = _get_segmentation_models_block(cfg)
     entries: list[dict[str, Any]] = []
-    for key in ["expert_models", "child_models", "sub_models"]:
+    for key in ["expert_models", "sub_models"]:
         block = seg_models.get(key)
         if isinstance(block, list):
             entries.extend(item for item in block if isinstance(item, dict))
@@ -134,7 +134,7 @@ def _extract_child_model_entries(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _get_candidate_expert_models(cfg: dict[str, Any], scheduler_context: dict[str, Any]) -> list[str]:
     candidates: list[str] = []
-    for item in _extract_child_model_entries(cfg):
+    for item in _extract_expert_model_entries(cfg):
         name = _get_model_entry_name(item)
         if name:
             candidates.append(str(name))
@@ -244,7 +244,7 @@ def _collect_roi_signal_tags(roi_assessment: dict[str, Any]) -> set[str]:
 
 
 def _get_routing_weight_spec(runtime_cfg: dict[str, Any]) -> dict[str, dict[str, float]]:
-    block = _get_child_model_routing_block(runtime_cfg)
+    block = _get_expert_model_routing_block(runtime_cfg)
     family_defaults = {
         "failure_categories": 0.34,
         "error_patterns": 0.24,
@@ -279,7 +279,7 @@ def _match_ratio(expected_tags: set[str], observed_tags: set[str]) -> tuple[floa
     return float(len(matched)) / max(float(len(expected_tags)), 1.0), matched
 
 
-def _build_child_model_routing_context(scheduler_context: dict[str, Any]) -> dict[str, Any]:
+def _build_expert_model_routing_context(scheduler_context: dict[str, Any]) -> dict[str, Any]:
     scene_profile = scheduler_context.get("scene_profile") or {}
     terrain_analysis = scheduler_context.get("terrain_analysis") or {}
     roi_assessment = scheduler_context.get("roi_assessment") or {}
@@ -303,7 +303,7 @@ def _build_child_model_routing_context(scheduler_context: dict[str, Any]) -> dic
     }
 
 
-def _normalize_child_model_profile(runtime_cfg: dict[str, Any], entry: dict[str, Any], routing_context: dict[str, Any]) -> dict[str, Any]:
+def _normalize_expert_model_profile(runtime_cfg: dict[str, Any], entry: dict[str, Any], routing_context: dict[str, Any]) -> dict[str, Any]:
     name = _get_model_entry_name(entry)
     expert_family = infer_expert_family_from_entry(entry)
     scene_tags = _expand_tags(entry.get("scene_tags") or entry.get("scene_labels"))
@@ -389,11 +389,11 @@ def _normalize_child_model_profile(runtime_cfg: dict[str, Any], entry: dict[str,
     }
 
 
-def _rank_child_model_profiles(runtime_cfg: dict[str, Any], scheduler_context: dict[str, Any]) -> list[dict[str, Any]]:
-    routing_context = _build_child_model_routing_context(scheduler_context)
+def _rank_expert_model_profiles(runtime_cfg: dict[str, Any], scheduler_context: dict[str, Any]) -> list[dict[str, Any]]:
+    routing_context = _build_expert_model_routing_context(scheduler_context)
     profiles = [
-        _normalize_child_model_profile(runtime_cfg, entry, routing_context)
-        for entry in _extract_child_model_entries(runtime_cfg)
+        _normalize_expert_model_profile(runtime_cfg, entry, routing_context)
+        for entry in _extract_expert_model_entries(runtime_cfg)
         if _get_model_entry_name(entry)
     ]
     profiles.sort(key=lambda item: (item["score"], item["routing_priority"]), reverse=True)
@@ -414,7 +414,7 @@ def _build_expert_family_profiles(
     scheduler_context: dict[str, Any],
     profiles: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    routing_context = _build_child_model_routing_context(scheduler_context)
+    routing_context = _build_expert_model_routing_context(scheduler_context)
     taxonomy = load_expert_taxonomy()
     weight_spec = _get_routing_weight_spec(runtime_cfg)
     score_weights = weight_spec["family"]
@@ -581,13 +581,13 @@ def _accept_preferred_expert_model(
         return None, None
 
     if target_idx == 0:
-        return normalized, f"{source} 指定子模型模板: {normalized}"
+        return normalized, f"{source} 指定专家模型: {normalized}"
 
     top_score = float(profiles[0].get("score") or 0.0)
     target_score = float(target_profile.get("score") or 0.0)
     if target_idx < min(top_k, len(profiles)) and (top_score - target_score) <= max_score_gap:
         return normalized, (
-            f"{source} 指定子模型模板: {normalized}；"
+            f"{source} 指定专家模型: {normalized}；"
             f"排名第 {target_idx + 1}，且与最优模板分差 {top_score - target_score:.1f}，允许保留。"
         )
     return None, (
@@ -602,22 +602,22 @@ def _resolve_preferred_expert_route(
     scheduler_context: dict[str, Any],
     llm_result: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    profiles = _rank_child_model_profiles(runtime_cfg, scheduler_context)
+    profiles = _rank_expert_model_profiles(runtime_cfg, scheduler_context)
     family_profiles = _build_expert_family_profiles(runtime_cfg, scheduler_context, profiles)
     by_name = {_normalize_tag(item.get("name")): item for item in profiles if item.get("name")}
 
-    expert_plan = (llm_result or {}).get("expert_model_call_plan") or (llm_result or {}).get("child_model_call_plan") or {}
+    expert_plan = (llm_result or {}).get("expert_model_call_plan") or (llm_result or {}).get("expert_model_call_plan") or {}
     roi_plan = (llm_result or {}).get("roi_refine_plan") or {}
     roi_decision = ((scheduler_context.get("roi_assessment") or {}).get("decision") or {})
 
     llm_preferred_expert_model = str(
         expert_plan.get("preferred_expert_model")
-        or expert_plan.get("preferred_child_model")
+        or expert_plan.get("preferred_expert_model")
         or ""
     ).strip()
     roi_preferred_expert_model = str(
         roi_decision.get("preferred_expert_model")
-        or roi_decision.get("preferred_child_model")
+        or roi_decision.get("preferred_expert_model")
         or ""
     ).strip()
     llm_preferred_family = str(
@@ -699,7 +699,7 @@ def _resolve_preferred_expert_route(
         "candidate_profiles": family_candidates or profiles,
         "global_candidate_profiles": profiles,
         "preferred_profile": preferred_profile,
-        "selection_reason": selection_reason or "未配置独立子模型模板，回退为当前分割引擎的 ROI 局部重跑。",
+        "selection_reason": selection_reason or "未配置独立专家模型模板，回退为当前分割引擎的 ROI 局部重跑。",
     }
 
 
@@ -764,8 +764,8 @@ def _build_expert_model_call_plan(
     llm_result: dict[str, Any] | None,
     planning_stage: str,
 ) -> dict[str, Any]:
-    llm_plan = (llm_result or {}).get("expert_model_call_plan") or (llm_result or {}).get("child_model_call_plan") or {}
-    routing_context = _build_child_model_routing_context(scheduler_context)
+    llm_plan = (llm_result or {}).get("expert_model_call_plan") or (llm_result or {}).get("expert_model_call_plan") or {}
+    routing_context = _build_expert_model_routing_context(scheduler_context)
     route = _resolve_preferred_expert_route(
         runtime_cfg=runtime_cfg,
         scheduler_context=scheduler_context,
@@ -785,8 +785,8 @@ def _build_expert_model_call_plan(
         "默认不允许同一 ROI 同时试跑多个专家；仅在下一轮无提升时才允许家族内降级切换。",
     ]
     escalation_rules = _as_str_list(llm_plan.get("escalation_rules")) or [
-        "首选子模型连续一轮无提升时切换到候选列表中的下一个模型。",
-        "无可用子模型或 ROI 信息不足时返回主模型结果并停止细化。",
+        "首选专家模型连续一轮无提升时切换到候选列表中的下一个模型。",
+        "无可用专家模型或 ROI 信息不足时返回主模型结果并停止细化。",
     ]
     routing_mode = str(llm_plan.get("routing_mode") or ("two_stage_family_routing" if ranked_profiles else "roi_quality_driven"))
     plan = ExpertModelCallPlan(
@@ -837,7 +837,7 @@ def _build_knowledge_embedding_plan(
     head_rules = llm_plan.get("head_rules") or []
     if not backbone_rules:
         backbone_rules = [
-            _default_knowledge_rule("backbone", "在子模型主干特征提取阶段引入场景先验标签或区域嵌入，用于调节特征提取侧重点。", "backbone.prior_conditioning=scene_embedding")
+            _default_knowledge_rule("backbone", "在专家模型主干特征提取阶段引入场景先验标签或区域嵌入，用于调节特征提取侧重点。", "backbone.prior_conditioning=scene_embedding")
         ]
     if not neck_rules:
         neck_rules = [
@@ -1235,22 +1235,3 @@ def build_expert_model_planning_runtime_cfg(
     plan_cfg["_roi_assessment"] = roi_assessment
     plan_cfg["_previous_round_summary"] = previous_round_summary
     return plan_cfg
-
-
-def build_child_model_planning_runtime_cfg(
-    *,
-    cfg: dict[str, Any],
-    input_assessment: dict[str, Any],
-    input_manifest: dict[str, Any],
-    data_processing_summary: dict[str, Any],
-    roi_assessment: dict[str, Any],
-    previous_round_summary: dict[str, Any],
-) -> dict[str, Any]:
-    return build_expert_model_planning_runtime_cfg(
-        cfg=cfg,
-        input_assessment=input_assessment,
-        input_manifest=input_manifest,
-        data_processing_summary=data_processing_summary,
-        roi_assessment=roi_assessment,
-        previous_round_summary=previous_round_summary,
-    )

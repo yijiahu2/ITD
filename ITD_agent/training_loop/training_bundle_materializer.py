@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from ITD_agent.evolution.review.io_utils import write_csv, write_json
+from ITD_agent.finetune_pool.review.io_utils import write_csv, write_json
 
 
 def materialize_training_dataset_bundle(
@@ -106,7 +106,7 @@ def _build_coco_payload(samples: list[dict[str, Any]], image_dir: Path, dataset_
         if src_image.exists():
             shutil.copyfile(src_image, dst_image)
         else:
-            dst_image.write_text("source image unavailable; V3 dataset manifest preserves source refs", encoding="utf-8")
+            dst_image.write_text("source image unavailable; dataset manifest preserves source refs", encoding="utf-8")
         width, height = _image_size(roi)
         images.append({"id": idx, "file_name": str(dst_image.relative_to(dataset_root)), "width": width, "height": height})
         bbox_xywh = _bbox_xywh(roi.get("bbox_px") or [])

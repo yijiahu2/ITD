@@ -19,14 +19,11 @@ def test_executor_prefers_canonical_expert_models_block() -> None:
                 "expert_models": [
                     {"name": "boundary_calibration_template", "algorithm": "mmdet_mask_scoring_rcnn"},
                 ],
-                "child_models": [
-                    {"name": "legacy_child_model", "algorithm": "mmdet_htc"},
-                ],
             }
         }
     }
 
-    entry = _resolve_role_entry(cfg, model_role="child_model", preferred_model="boundary_calibration_template")
+    entry = _resolve_role_entry(cfg, model_role="expert_model", preferred_model="boundary_calibration_template")
 
     assert entry["name"] == "boundary_calibration_template"
 

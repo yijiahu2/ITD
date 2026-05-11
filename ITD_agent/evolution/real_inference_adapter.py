@@ -7,12 +7,9 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from scripts.benchmark_coco_instance_dataset import (
-    _build_image_index,
-    _instances_from_label_image,
-    _resolve_image_path,
-    _write_semantic_prior_outputs,
-)
+from ITD_agent.segmentation.coco_utils import build_image_index, resolve_image_path
+from ITD_agent.segmentation.instance_label_io import instances_from_label_image
+from ITD_agent.segmentation.semantic_prior_outputs import write_semantic_prior_outputs
 from tools.cached_stage_runners import predict_semantic_prior_cached, run_segmentation_cached
 
 
@@ -55,8 +52,8 @@ def derive_dataset_input(input_cfg: dict[str, Any]) -> dict[str, Any]:
 
 def resolve_image_path_for_coco(image: dict[str, Any], image_root: str | Path) -> Path:
     image_dir = Path(image_root)
-    by_name, by_stem = _build_image_index(image_dir)
-    return _resolve_image_path(str(image["file_name"]), by_name, by_stem, image_dir)
+    by_name, by_stem = build_image_index(image_dir)
+    return resolve_image_path(str(image["file_name"]), by_name, by_stem, image_dir)
 
 
 def _read_label_image(path: str | Path) -> np.ndarray:
@@ -71,7 +68,7 @@ def _instances_from_segmentation_result(
     score_map: np.ndarray | None,
     score_mode: str,
 ) -> list[dict[str, Any]]:
-    instances = _instances_from_label_image(
+    instances = instances_from_label_image(
         label_image=_read_label_image(y_inst_tif),
         image_id=image_id,
         score_map=score_map,
@@ -129,7 +126,7 @@ def run_real_segmentation_for_sample(
         model_cfg=model_cfg,
     )
     semantic_prior_pred = predict_semantic_prior_cached(runtime_cfg)
-    semantic_outputs = _write_semantic_prior_outputs(
+    semantic_outputs = write_semantic_prior_outputs(
         semantic_prior_pred,
         Path(output_dir),
         save_prob_tif=bool((model_cfg or {}).get("save_semantic_prior_probability_tif", False)),

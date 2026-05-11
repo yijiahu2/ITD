@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from ITD_agent.orchestration.orchestrator import run_itd_agent
+from ITD_agent.orchestration.workflow import run
 
 
 def run_ITD_agent_experiment(config_path: str) -> dict[str, Any]:
-    return run_itd_agent(config_path)
+    return run(config_path)["result"]
 
 
 def main() -> None:

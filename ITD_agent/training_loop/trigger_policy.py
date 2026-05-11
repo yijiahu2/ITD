@@ -7,11 +7,11 @@ def evaluate_dry_run_trigger(candidates: list[TrainingCandidate]) -> dict[str, o
     return {
         "trigger_training": False,
         "candidate_count": len(candidates),
-        "reason": "V1 only supports dry-run training candidate intake.",
+        "reason": "Adaptive inference only marks training candidates; training decisions stay in training_loop.",
     }
 
 
-def evaluate_v3_training_trigger(
+def evaluate_training_trigger(
     context: TrainingTriggerContext,
     *,
     min_training_ready: int = 100,
@@ -53,7 +53,7 @@ def evaluate_v3_training_trigger(
         "decision": decision,
         "approve_pilot": decision == "approve_pilot",
         "approve_formal": False,
-        "reasons": reasons or ["v3_pilot_trigger_conditions_passed"],
+        "reasons": reasons or ["pilot_trigger_conditions_passed"],
         "context": context.to_dict(),
         "thresholds": {
             "min_training_ready": min_training_ready,

@@ -102,7 +102,7 @@ def build_decision_flags(
         result.get("roi_round_count", 0) > 0
         or result.get("param_search_exhausted", False)
         or result.get("refinement_attempted", False)
-        or result.get("assessment_phase") in {"expert_model", "child_model"}
+        or result.get("assessment_phase") in {"expert_model", "expert_model"}
         or result.get("evaluation_mode") == "benchmark"
     )
     actionable_param_issue = bool(

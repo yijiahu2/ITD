@@ -1,0 +1,156 @@
+version: workflow
+mode: controlled_training
+mainline_profile: A_DOM_ONLY
+
+source:
+  run_id: run_20260509T092837767123Z
+  review_asset_dir: /home/xth/forest_agent_project/outputs/adaptive_inference_dataset4_real/review
+
+target:
+  target_model_role: expert_model
+  target_model_id: mmdet_htc
+  target_expert_family: dense_adhesion
+  failure_category: under_segmentation
+
+expert_taxonomy:
+  path: configs/expert_taxonomy/expert_families.yaml
+  use_training_defaults: true
+
+dataset:
+  use_finetune_pool_exporter: true
+  split_by: [original_image_id, source_trajectory_id]
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  build_replay: true
+
+quality_gate:
+  min_training_ready_samples: 1
+  min_replay_samples: 30
+  min_public_candidates: 0
+  allow_manual_labels: true
+  allow_pseudo_labels: true
+  reject_missing_artifacts: true
+  reject_invalid_masks: true
+  reject_empty_annotations: true
+
+training:
+  pilot_first: true
+  pilot:
+    enabled: true
+    max_samples: 200
+    override_epochs: 3
+    build_only: false
+  formal:
+    enabled: true
+    require_pilot_pass: true
+    require_pilot_replay_guard_pass: true
+    require_pilot_dom_geometry_guard_pass: true
+
+official_config_patch:
+  patch_dataset_paths: true
+  patch_num_classes: true
+  patch_work_dir: true
+  patch_load_from: true
+  patch_seed: true
+  keep_model_architecture: true
+  keep_official_optimizer: true
+  keep_official_scheduler: true
+
+runner:
+  output_dir: /home/xth/forest_agent_project/outputs/adaptive_inference_dataset4_real/training
+  write_command_sh: true
+  execute_training: true
+
+evaluation:
+  use_existing_evaluation_analysis: true
+  run_coco_eval: false
+  run_error_decomposition: false
+  run_geometry_eval: false
+  run_finetune_effect_assessment: false
+  run_replay_guard: true
+
+dom_only_geometry_guard:
+  enabled: true
+  use_existing_geometry_metrics: true
+  sample_source: replay_dom_only_samples
+  max_eval_samples: 50
+  checks:
+    small_instance_ratio: true
+    large_instance_ratio: true
+    duplicate_instance_ratio: true
+    fragmented_mask_ratio: true
+    abnormal_density_block_ratio: true
+    roi_outside_false_positive_ratio: true
+    boundary_complexity_ratio: true
+  thresholds:
+    max_small_instance_ratio_increase: 0.03
+    max_large_instance_ratio_increase: 0.02
+    max_duplicate_instance_ratio_increase: 0.02
+    max_fragmented_mask_ratio_increase: 0.03
+    max_abnormal_density_block_ratio_increase: 0.03
+    max_roi_outside_false_positive_increase: 0.02
+    max_boundary_complexity_increase: 0.03
+
+capability_profile:
+  enabled: true
+  write_model_capability_profile: true
+  include_coco_metrics: true
+  include_error_type_delta: true
+  include_geometry_delta: true
+  include_replay_guard_summary: true
+  include_recommended_usage: true
+  allow_as_routing_evidence: true
+
+routing_candidate:
+  enabled: true
+  build_routing_update_candidate: true
+  allow_active_route_map_update: false
+  require_promotion_to_shadow: true
+  require_replay_guard_pass: true
+  require_geometry_guard_pass: true
+  status: pending_review
+
+training_feedback:
+  enabled: true
+  write_memory_feedback_candidate: true
+  write_skill_feedback_candidate: true
+  allow_active_memory_update: false
+  allow_active_skill_activation: false
+  allow_policy_skill_activation: false
+  status: pending_review
+
+replay_guard:
+  require_evaluated_delta: true
+  require_replay_samples: true
+  max_ap_drop: 0.01
+  max_ap50_drop: 0.015
+  max_recall_drop: 0.02
+  max_precision_drop: 0.02
+  max_error_type_regression_ratio: 0.05
+  max_catastrophic_cases: 0
+
+promotion:
+  register_candidate: true
+  allow_promote_to_shadow: true
+  allow_promote_to_active: false
+  require_replay_guard_pass: true
+  require_dom_only_geometry_guard_pass: true
+  require_capability_profile: true
+  allowed_decisions: [reject, keep_candidate, promote_to_shadow]
+  forbidden_decisions: [promote_to_active, replace_active_model, update_active_route_map]
+
+distillation:
+  enabled: true
+  build_distillation_manifest: true
+  run_distillation_training: false
+  use_gt_when_available: true
+  pseudo_label_quality_min: silver
+
+guardrails:
+  allow_weight_update: true
+  allow_active_model_replace: false
+  allow_active_routing_policy_update: false
+  allow_active_skill_policy: false
+  allow_llm_direct_training_decision: false
+  allow_llm_direct_model_promotion: false

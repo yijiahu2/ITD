@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from ITD_agent.evolution.review.io_utils import load_structured, write_json
+from ITD_agent.finetune_pool.review.io_utils import load_structured, write_json
 from ITD_agent.training_loop.contracts import TrainingPlan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -102,7 +102,7 @@ def _generated_training_config(
     payload = {
         **template_payload,
         "output_dir": str(job_dir),
-        "run_name": str((cfg.get("source") or {}).get("run_id") or "v3_training"),
+        "run_name": str((cfg.get("source") or {}).get("run_id") or "controlled_training"),
         "segmentation_algorithm": family_cfg.get("algorithm_name"),
         "segmentation_train_out_dirname": "segmentation_training",
         "segmentation_dataset_dirname": "external_segmentation_dataset",

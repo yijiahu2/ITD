@@ -7,7 +7,7 @@
 - `examples/`
   用户可直接复制和修改的示例入口配置。
 - `templates/runtime/`
-  主模型与子模型运行模板。
+  主模型与专家模型运行模板。
 - `templates/finetune/`
   微调训练模板。
 - `templates/benchmark/`
@@ -76,4 +76,4 @@
 - `failure_categories`: 对应失败类别，例如 `dense_canopy_adhesion`。
 - `target_error_patterns`: 对应误差模式，例如 `count_under`、`closure_low`。
 - `routing_priority`: 默认路由优先级。
-- `runtime_overrides`: 模板型子模型的默认运行参数覆盖项。
+- `runtime_overrides`: 模板型专家模型的默认运行参数覆盖项。

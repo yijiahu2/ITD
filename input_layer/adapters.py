@@ -134,10 +134,7 @@ def normalize_agent_runtime_config(
     runtime_cache_worker = core_cfg.get("runtime_cache_worker") or {}
     segmentation_models = core_cfg.get("segmentation_models") or core_cfg.get("segmentation_model") or {}
     if isinstance(segmentation_models, dict):
-        if "expert_models" not in segmentation_models and isinstance(segmentation_models.get("child_models"), list):
-            segmentation_models["expert_models"] = deepcopy(segmentation_models["child_models"])
-        if "expert_model_routing" not in planning and isinstance(planning.get("child_model_routing"), dict):
-            planning["expert_model_routing"] = deepcopy(planning["child_model_routing"])
+        segmentation_models.setdefault("expert_models", [])
     model_cfg = segmentation.get("model") or {}
     semantic_prior_cfg = (
         data_processing.get("semantic_prior")

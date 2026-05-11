@@ -26,6 +26,13 @@ from ITD_agent.segmentation.coco_utils import (
     resolve_image_path as _resolve_image_path,
     segmentation_to_rle as _segmentation_to_rle,
 )
+from ITD_agent.segmentation.instance_label_io import (
+    instances_from_label_image as _instances_from_label_image,
+    read_instance_labels as _read_instance_labels,
+    rle_bbox as _rle_bbox,
+    score_from_mask as _score_from_mask,
+)
+from ITD_agent.segmentation.semantic_prior_outputs import write_semantic_prior_outputs as _write_semantic_prior_outputs
 from tools.cached_stage_runners import predict_semantic_prior_cached, run_segmentation_cached
 
 
@@ -60,10 +67,6 @@ def _normalize_int(value: Any, default: int | None = None) -> int | None:
 
 def _rle_area(rle: dict[str, Any]) -> float:
     return float(mask_utils.area(rle))
-
-
-def _rle_bbox(rle: dict[str, Any]) -> list[float]:
-    return [float(x) for x in mask_utils.toBbox(rle).tolist()]
 
 
 def _prepare_gt_records(coco: dict[str, Any], image_dir: Path) -> list[dict[str, Any]]:
@@ -112,96 +115,6 @@ def _prepare_gt_records(coco: dict[str, Any], image_dir: Path) -> list[dict[str,
         )
 
     return records
-
-
-def _write_semantic_prior_outputs(pred: dict[str, Any], output_dir: Path, save_prob_tif: bool) -> dict[str, str]:
-    mod = pred["module"]
-    mask = pred["mask"]
-    prob = pred["probability"]
-
-    out_tif = output_dir / "M_sem.tif"
-    out_png = output_dir / "M_sem.png"
-    out_shp = output_dir / "M_sem.shp"
-    mod.write_tif(str(out_tif), mask, pred["profile"])
-    mod.mask_to_shp(
-        mask=mask,
-        transform=pred["transform"],
-        crs=pred["crs"],
-        out_shp=str(out_shp),
-        min_area_m2=mod.MIN_AREA_M2,
-        simplify_tol=mod.SIMPLIFY_TOL,
-    )
-    mod.cv2.imwrite(str(out_png), (mask * 255).astype(mod.np.uint8))
-
-    outputs = {
-        "m_sem_tif": str(out_tif),
-        "m_sem_png": str(out_png),
-        "m_sem_shp": str(out_shp),
-    }
-
-    if save_prob_tif:
-        prob_tif = output_dir / "M_sem_prob.tif"
-        profile = pred["tiff_profile_uint8"].copy()
-        profile.update(dtype=rasterio.float32, nodata=0.0)
-        with rasterio.open(prob_tif, "w", **profile) as dst:
-            dst.write(prob.astype(np.float32), 1)
-        outputs["m_sem_prob_tif"] = str(prob_tif)
-
-    return outputs
-
-
-def _read_instance_labels(path: str | Path) -> np.ndarray:
-    with rasterio.open(path) as src:
-        return src.read(1).astype(np.int32)
-
-
-def _score_from_mask(score_map: np.ndarray | None, mask: np.ndarray, mode: str) -> float:
-    if score_map is None or mode == "constant_one":
-        return 1.0
-
-    vals = score_map[mask]
-    if vals.size == 0:
-        return 0.0
-
-    if mode == "semantic_prior_max_prob":
-        score = float(vals.max())
-    elif mode == "semantic_prior_median_prob":
-        score = float(np.median(vals))
-    else:
-        score = float(vals.mean())
-
-    return float(np.clip(score, 0.0, 1.0))
-
-
-def _instances_from_label_image(
-    label_image: np.ndarray,
-    image_id: int,
-    score_map: np.ndarray | None,
-    score_mode: str,
-) -> list[dict[str, Any]]:
-    pred_instances: list[dict[str, Any]] = []
-    unique_ids = np.unique(label_image)
-    unique_ids = unique_ids[unique_ids > 0]
-
-    for inst_id in unique_ids.tolist():
-        mask = label_image == int(inst_id)
-        area = int(mask.sum())
-        if area <= 0:
-            continue
-        rle = mask_utils.encode(np.asfortranarray(mask.astype(np.uint8)))
-        pred_instances.append(
-            {
-                "pred_id": int(inst_id),
-                "image_id": image_id,
-                "score": _score_from_mask(score_map, mask, score_mode),
-                "area": float(area),
-                "bbox": _rle_bbox(rle),
-                "rle": rle,
-            }
-        )
-
-    pred_instances.sort(key=lambda x: (-float(x["score"]), int(x["pred_id"])))
-    return pred_instances
 
 
 def _match_predictions(

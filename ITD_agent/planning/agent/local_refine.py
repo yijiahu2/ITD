@@ -166,7 +166,7 @@ def _resolve_preferred_expert_runtime_overrides(
 ) -> Dict[str, Any]:
     if not preferred_expert_model or not isinstance(expert_plan_summary, dict):
         return {}
-    call_plan = expert_plan_summary.get("expert_model_call_plan") or expert_plan_summary.get("child_model_call_plan") or {}
+    call_plan = expert_plan_summary.get("expert_model_call_plan") or expert_plan_summary.get("expert_model_call_plan") or {}
     profiles = call_plan.get("candidate_profiles") or []
     preferred_name = _normalize_model_name(preferred_expert_model)
     for item in profiles:

@@ -76,13 +76,13 @@ def _resolve_role_entry(cfg: dict[str, Any], model_role: str, preferred_model: s
         entry = seg_models.get("main_model")
         return entry if isinstance(entry, dict) else {}
 
-    child_candidates = seg_models.get("expert_models") or seg_models.get("child_models") or []
-    if isinstance(child_candidates, dict):
-        child_candidates = list(child_candidates.values())
-    if not isinstance(child_candidates, list):
-        child_candidates = []
+    expert_candidates = seg_models.get("expert_models") or []
+    if isinstance(expert_candidates, dict):
+        expert_candidates = list(expert_candidates.values())
+    if not isinstance(expert_candidates, list):
+        expert_candidates = []
 
-    normalized_candidates = [item for item in child_candidates if isinstance(item, dict)]
+    normalized_candidates = [item for item in expert_candidates if isinstance(item, dict)]
     if preferred_model:
         preferred_model = str(preferred_model).strip().lower()
         for item in normalized_candidates:

@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
-from ITD_agent.evolution.review.io_utils import write_json
+from ITD_agent.finetune_pool.review.io_utils import write_json
 
 
 def build_expert_to_main_distillation_manifest(
@@ -33,7 +33,7 @@ def build_expert_to_main_distillation_manifest(
                     "source_roi_id": item.get("source_roi_id"),
                     "source_expert_model": item.get("expert_model"),
                     "quality_tier": tier,
-                    "label_source": "gt_or_v2_pseudo_label",
+                    "label_source": "gt_or_review_pseudo_label",
                     "status": "manifest_only",
                 }
             )

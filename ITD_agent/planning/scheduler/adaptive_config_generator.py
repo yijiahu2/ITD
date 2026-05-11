@@ -137,8 +137,8 @@ def build_scheduler_prompt(
 要求：
 1. 只输出需要更新的参数，不要重复整份模板。
 2. 优先考虑：
-   - 主模型/子模型运行配置表
-   - 主模型/子模型微调训练配置
+   - 主模型/专家模型运行配置表
+   - 主模型/专家模型微调训练配置
    - ROI 区域提取参数
    - 先验知识嵌入规则
    - 中间数据处理规则
@@ -184,7 +184,7 @@ def _fallback_updates(template_cfg: dict[str, Any], scheduler_context: dict[str,
     if template_cfg.get("ITD_agent"):
         updates["ITD_agent"] = {
             "planning": {
-                "memory_rule": "子模型分割成功且关键误差达标时写入记忆库。",
+                "memory_rule": "专家模型分割成功且关键误差达标时写入记忆库。",
                 "finetune_rule": "同类区域多次分割失败时写入微调集。",
             }
         }

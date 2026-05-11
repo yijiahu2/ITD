@@ -88,7 +88,7 @@ ITD_agent:
       signal_same_type_merge_distance_m: 8.0
       signal_same_type_merge_distance_floor_m: 4.0
       signal_same_type_merge_distance_cap_m: 14.0
-    child_model_routing:
+    expert_model_routing:
       family_score_scale: 100.0
       model_score_scale: 100.0
       family_weights:
@@ -118,7 +118,7 @@ ITD_agent:
     main_model:
       name: legacy_cellpose_sam
       script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-    child_models:
+    expert_models:
       - name: dense_canopy_template
         algorithm: mmdet_htc
         description: 面向密闭林冠、粘连严重 ROI 的训练后 HTC 专家模型。

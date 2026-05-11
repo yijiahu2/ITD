@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .child_model_assessment import evaluate_child_model_assessment, evaluate_expert_model_assessment
+from .expert_model_assessment import evaluate_expert_model_assessment
 from .final_assessment import evaluate_final_phase
 from .finetune_effect_assessment import compare_finetune_effect
 from .flow_decisions import build_roi_flow_decision
@@ -88,27 +88,6 @@ def evaluate_expert_model_phase(
     )
 
 
-def evaluate_child_model_phase(
-    cfg: dict[str, Any],
-    *,
-    metrics: dict[str, Any],
-    metrics_json: str,
-    details_csv: str,
-    round_idx: int,
-    previous_score: float | None = None,
-    terrain_info: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    return evaluate_child_model_assessment(
-        cfg,
-        metrics=metrics,
-        metrics_json=metrics_json,
-        details_csv=details_csv,
-        round_idx=round_idx,
-        previous_score=previous_score,
-        terrain_info=terrain_info,
-    )
-
-
 def evaluate_finetune_effect_phase(
     *,
     before_csv: str,
@@ -128,7 +107,6 @@ __all__ = [
     "evaluate_main_model_phase",
     "evaluate_roi_phase",
     "evaluate_expert_model_phase",
-    "evaluate_child_model_phase",
     "evaluate_final_phase",
     "evaluate_finetune_effect_phase",
 ]

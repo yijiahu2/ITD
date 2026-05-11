@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-from openai import OpenAI
 
 from input_layer.mainline_profiles import (
     A_DOM_ONLY,
@@ -17,6 +16,10 @@ from input_layer.mainline_profiles import (
     resolve_mainline_profile,
 )
 
+from .audit import build_audit_record, write_audit_record
+from .client import build_openai_compatible_client
+from .fallback import fallback_structured_plan
+from .response_parser import parse_json_response, strip_json_fence
 from .prompts import (
     _build_planning_prompt,
     _build_roi_candidate_selection_prompt,
@@ -193,10 +196,8 @@ def resolve_gateway_config(
     )
 
 
-def build_client(cfg: LLMGatewayConfig) -> OpenAI:
-    if not cfg.api_key:
-        raise ValueError("LLM api_key is not configured.")
-    return OpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
+def build_client(cfg: LLMGatewayConfig) -> Any:
+    return build_openai_compatible_client(cfg)
 
 
 def gateway_available(cfg: LLMGatewayConfig) -> bool:
@@ -204,18 +205,7 @@ def gateway_available(cfg: LLMGatewayConfig) -> bool:
 
 
 def _strip_json_fence(content: str) -> str:
-    text = (content or "").strip()
-    if not text.startswith("```"):
-        return text
-    lines = text.splitlines()
-    if lines and lines[0].startswith("```"):
-        lines = lines[1:]
-    if lines and lines[-1].strip() == "```":
-        lines = lines[:-1]
-    stripped = "\n".join(lines).strip()
-    if stripped.startswith("json"):
-        stripped = stripped[4:].strip()
-    return stripped
+    return strip_json_fence(content)
 
 
 def call_json(prompt: str, cfg: LLMGatewayConfig, system_prompt: str) -> dict[str, Any]:
@@ -231,7 +221,7 @@ def call_json(prompt: str, cfg: LLMGatewayConfig, system_prompt: str) -> dict[st
         temperature=cfg.temperature,
     )
     content = _strip_json_fence((resp.choices[0].message.content or "").strip())
-    return json.loads(content)
+    return parse_json_response(content)
 
 
 def _invoke_json_task(
@@ -245,13 +235,14 @@ def _invoke_json_task(
     use_llm: bool = True,
 ) -> dict[str, Any]:
     prompt_chars = len(prompt or "")
+    start_time = time.perf_counter()
     cfg = resolve_gateway_config(
         runtime_cfg=runtime_cfg,
         provider=provider,
         model=model,
     )
     if not use_llm:
-        return LLMGatewayResponse(
+        response = LLMGatewayResponse(
             task_type=task_type,
             status="disabled",
             provider=cfg.provider,
@@ -259,19 +250,26 @@ def _invoke_json_task(
             system_prompt=system_prompt,
             prompt_chars=prompt_chars,
         ).to_dict()
+        _audit_if_configured(runtime_cfg=runtime_cfg, task_type=task_type, cfg=cfg, prompt=prompt, response=response, start_time=start_time)
+        return response
     if not gateway_available(cfg):
-        return LLMGatewayResponse(
+        fallback = fallback_structured_plan(task_type=task_type, error="LLM gateway is not configured or disabled.")
+        response = LLMGatewayResponse(
             task_type=task_type,
             status="unavailable",
             provider=cfg.provider,
             model=cfg.model,
+            parsed_result=fallback,
             system_prompt=system_prompt,
             prompt_chars=prompt_chars,
             error="LLM gateway is not configured or disabled.",
+            fallback_used=True,
         ).to_dict()
+        _audit_if_configured(runtime_cfg=runtime_cfg, task_type=task_type, cfg=cfg, prompt=prompt, response=response, start_time=start_time)
+        return response
     try:
         parsed = call_json(prompt=prompt, cfg=cfg, system_prompt=system_prompt)
-        return LLMGatewayResponse(
+        response = LLMGatewayResponse(
             task_type=task_type,
             status="completed",
             provider=cfg.provider,
@@ -280,16 +278,54 @@ def _invoke_json_task(
             system_prompt=system_prompt,
             prompt_chars=prompt_chars,
         ).to_dict()
+        _audit_if_configured(runtime_cfg=runtime_cfg, task_type=task_type, cfg=cfg, prompt=prompt, response=response, start_time=start_time)
+        return response
     except Exception as exc:
-        return LLMGatewayResponse(
+        fallback = fallback_structured_plan(task_type=task_type, error=str(exc))
+        response = LLMGatewayResponse(
             task_type=task_type,
-            status="failed",
+            status="fallback",
             provider=cfg.provider,
             model=cfg.model,
+            parsed_result=fallback,
             system_prompt=system_prompt,
             prompt_chars=prompt_chars,
             error=str(exc),
+            fallback_used=True,
         ).to_dict()
+        _audit_if_configured(runtime_cfg=runtime_cfg, task_type=task_type, cfg=cfg, prompt=prompt, response=response, start_time=start_time)
+        return response
+
+
+def _audit_if_configured(
+    *,
+    runtime_cfg: dict[str, Any] | None,
+    task_type: str,
+    cfg: LLMGatewayConfig,
+    prompt: str,
+    response: dict[str, Any],
+    start_time: float,
+) -> None:
+    gateway_block = _get_gateway_block(runtime_cfg)
+    audit_path = gateway_block.get("audit_jsonl")
+    if not audit_path:
+        return
+    latency_ms = (time.perf_counter() - start_time) * 1000.0
+    record = build_audit_record(
+        task_type=task_type,
+        provider=cfg.provider,
+        model=cfg.model,
+        prompt=prompt,
+        response=response,
+        latency_ms=latency_ms,
+        run_id=str((runtime_cfg or {}).get("run_id") or (runtime_cfg or {}).get("run_name") or "") or None,
+        stage=task_type,
+        input_context_path=gateway_block.get("input_context_path"),
+        raw_response_path=gateway_block.get("raw_response_path"),
+        parsed_response_path=gateway_block.get("parsed_response_path"),
+        validation_status="valid" if response.get("parsed_result") is not None else "not_validated",
+    )
+    write_audit_record(audit_path, record)
 
 
 def request_planning_decision(

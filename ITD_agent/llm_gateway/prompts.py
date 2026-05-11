@@ -53,7 +53,7 @@ def _compact_template_cfg(template_cfg: dict[str, Any]) -> dict[str, Any]:
             "main_model": (seg_cfg.get("main_model") or {}),
             "expert_models": [
                 _compact_expert_model_entry(item)
-                for item in _take_list(seg_cfg.get("expert_models") or seg_cfg.get("child_models"), 6)
+                for item in _take_list(seg_cfg.get("expert_models"), 6)
                 if isinstance(item, dict)
             ],
         },
@@ -288,7 +288,7 @@ def _build_planning_prompt(
     template_cfg: dict[str, Any],
     scheduler_context: dict[str, Any],
 ) -> str:
-    stage_label = "主模型" if planning_stage == "main_model" else "子模型"
+    stage_label = "主模型" if planning_stage == "main_model" else "专家模型"
     compact_template_cfg = _compact_template_cfg(template_cfg)
     compact_scheduler_context = _compact_scheduler_context(scheduler_context)
     return f"""
@@ -303,15 +303,15 @@ def _build_planning_prompt(
 
 要求：
 1. 只输出需要更新的参数。
-2. 重点考虑主/子模型运行配置、ROI 规则、子模型调用规则、微调训练配置、知识嵌入规则和中间数据处理规则。
+2. 重点考虑主/专家模型运行配置、ROI 规则、专家模型调用规则、微调训练配置、知识嵌入规则和中间数据处理规则。
 3. 若上下文中存在影像纹理指标或纹理标签，例如 contrast、entropy、asm、energy、correlation、homogeneity、texture_complex、texture_smooth，应将其纳入场景判断与参数决策。
 4. 若上下文中存在影像质量指标或质量标签，例如 blur、overexposed_ratio、underexposed_ratio、shadow_ratio_estimate、stripe_noise_score、color_cast_score、blur_high、shadow_heavy、stripe_noise、color_cast，也必须纳入参数决策。
 5. 若当前主模型是 legacy_cellpose_sam / Cellpose-SAM，必须优先判断并输出这些核心参数是否需要更新：diam_list、tile、overlap、tile_overlap、augment、iou_merge_thr、bsize。
 6. 对 Cellpose-SAM 的参数判断必须结合影像分辨率、先验平均冠幅、郁闭度、密度、纹理复杂度、边缘强度、模糊、阴影、曝光异常、条带噪声以及色偏风险，不能只做泛化描述。
 7. 若上下文中同时存在 global_terrain_background 和 dom_terrain_context，必须区分两者角色：
    - global_terrain_background 只作为整体场景背景和弱约束
-   - dom_terrain_context 才是主模型参数与子模型排序的主要地形依据
-8. ROI / 子模型相关决策时，禁止用全局 DEM 地形标签替代 DOM/ROI 层地形上下文。
+   - dom_terrain_context 才是主模型参数与专家模型排序的主要地形依据
+8. ROI / 专家模型相关决策时，禁止用全局 DEM 地形标签替代 DOM/ROI 层地形上下文。
 9. 若近期成功策略可复用，优先复用。
 10. 若近期失败模式反复出现，给出进入微调池与记忆库的建议。
 11. 只输出 JSON。

@@ -16,7 +16,7 @@ class TrainingCandidate:
     approved: bool = False
     artifact_refs: dict[str, Any] = field(default_factory=dict)
     trigger_training: bool = False
-    reason: str = "V1 only supports dry-run training candidate intake."
+    reason: str = "Adaptive inference only marks training candidates; training decisions stay in training_loop."
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -25,7 +25,7 @@ class TrainingCandidate:
 @dataclass(frozen=True)
 class TrainingTriggerContext:
     source_run_id: str
-    source_v2_review_dir: str
+    source_review_asset_dir: str
     target_model_role: str
     target_model_id: str
     target_expert_family: str | None

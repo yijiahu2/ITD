@@ -91,11 +91,11 @@ ITD_agent:
     main_model:
       name: legacy_cellpose_sam
       script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-    child_models:
+    expert_models:
       - name: dense_canopy_template
         template_profile: true
         script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向密闭林冠、粘连严重 ROI 的子模型模板。
+        description: 面向密闭林冠、粘连严重 ROI 的专家模型模板。
         scene_tags: [dense_mixed, dense_forest]
         terrain_tags: [gentle, moderate, hill_middle]
         failure_categories: [dense_canopy_adhesion, count_underestimate, crown_overlap_conflict]
@@ -104,7 +104,7 @@ ITD_agent:
       - name: steep_slope_template
         template_profile: true
         script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向陡坡和高起伏地形 ROI 的子模型模板。
+        description: 面向陡坡和高起伏地形 ROI 的专家模型模板。
         scene_tags: [dense_mixed, mountain, hill]
         terrain_tags: [steep, ridge, valley, mountain_middle, mountain_low, hill_high]
         failure_categories: [terrain_shadow_confused, count_underestimate]
@@ -113,7 +113,7 @@ ITD_agent:
       - name: north_shade_template
         template_profile: true
         script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向阴坡阴影和闭合度恢复 ROI 的子模型模板。
+        description: 面向阴坡阴影和闭合度恢复 ROI 的专家模型模板。
         scene_tags: [dense_mixed, shadow]
         terrain_tags: [north, northeast, northwest, shadow, north_shade]
         failure_categories: [terrain_shadow_confused, crown_boundary_fragmented]
@@ -122,7 +122,7 @@ ITD_agent:
       - name: large_crown_template
         template_profile: true
         script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-        description: 面向稀疏大冠幅和过分裂 ROI 的子模型模板。
+        description: 面向稀疏大冠幅和过分裂 ROI 的专家模型模板。
         scene_tags: [sparse, open_forest]
         terrain_tags: [gentle, moderate]
         failure_categories: [count_overestimate, crown_boundary_fragmented]

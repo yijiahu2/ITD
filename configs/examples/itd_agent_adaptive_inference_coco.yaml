@@ -1,0 +1,37 @@
+mode: adaptive_inference
+mainline_profile: A_DOM_ONLY
+input:
+  annotation_json: /path/to/coco_gt.json
+  image_root: /path/to/images
+  prediction_json: /path/to/main_predictions.json
+output_dir: outputs/adaptive_inference
+main_model:
+  model_id: legacy_cellpose_sam
+  execution_mode: prediction_json
+expert_models:
+  execution_mode: mock
+  mock_strategy: use_gt_or_perturbed_gt
+evaluation:
+  matching:
+    iou_threshold: 0.5
+    weak_overlap_threshold: 0.1
+adaptive_inference:
+  max_main_retries: 1
+  max_expert_rounds: 1
+  max_next_expert_trials: 0
+  min_improvement_epsilon: 0.01
+  allow_llm_direct_fusion_decision: false
+  allow_llm_direct_training_trigger: false
+roi_policy:
+  expert_tile_size_px: 1024
+  fusion_buffer_px: 64
+  threshold_mode: adaptive_percentile
+  min_trigger_per_tile:
+    min_failure_instances: 3
+expert_routing_policy:
+  version: v1_rule_based
+  route_map:
+    under_segmentation: htc
+    over_segmentation: mask2former
+    false_positive: cascade_mask_rcnn
+    false_negative: maskdino

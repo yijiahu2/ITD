@@ -27,6 +27,7 @@ from .runtime_support import (
     safe_float,
 )
 from .summary_builder import build_run_summary, finalize_run_summary
+from .workflow import adaptive_inference, export, preflight, review, run, state, train
 from .orchestrator import main, prepare_runtime_config, run_itd_agent, run_itd_agent_runtime
 
 __all__ = [
@@ -46,9 +47,14 @@ __all__ = [
     "materialize_public_output_aliases",
     "main",
     "normalize_bool",
+    "adaptive_inference",
+    "export",
+    "preflight",
     "prepare_runtime_config",
     "prepare_terrain_inputs_from_cfg",
     "require_file",
+    "review",
+    "run",
     "run_bash_in_conda_env",
     "run_cmd",
     "run_grouped_experiment",
@@ -57,6 +63,8 @@ __all__ = [
     "run_semantic_prior_task",
     "safe_float",
     "save_json",
+    "state",
     "sync_runtime_artifacts_to_persistent_root",
+    "train",
     "validate_runtime_cfg",
 ]

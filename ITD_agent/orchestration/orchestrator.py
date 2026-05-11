@@ -206,7 +206,7 @@ def _build_refinement_failure_modes(
             modes.append("林分密度误差加剧")
 
     if not modes:
-        modes.append("子模型细化未带来有效提升")
+        modes.append("专家模型细化未带来有效提升")
     return list(dict.fromkeys(modes))
 
 

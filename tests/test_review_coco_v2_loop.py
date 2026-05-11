@@ -9,9 +9,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ITD_agent.evolution.evolve_infer_runner import run_evolve_infer_v1
-from ITD_agent.evolution.review.review_guardrails import V2WriteAction, assert_v2_guardrails, check_write_action
-from ITD_agent.evolution.review.review_runner import run_review_v2
+from ITD_agent.evolution.adaptive_inference import run_adaptive_inference_stage
+from ITD_agent.finetune_pool.review.review_guardrails import ReviewWriteAction, assert_review_guardrails, check_write_action
+from ITD_agent.finetune_pool.review.review_runner import run_review_stage
 
 
 def _write_json(path: Path, payload: dict) -> Path:
@@ -52,7 +52,7 @@ def _run_v1_fixture(tmp_path: Path) -> dict:
     config_path = _write_json(
         tmp_path / "v1_config.json",
         {
-            "mode": "supervised_coco_evolve_v1",
+            "mode": "adaptive_inference",
             "mainline_profile": "A_DOM_ONLY",
             "input": {
                 "annotation_json": str(gt_path),
@@ -71,24 +71,24 @@ def _run_v1_fixture(tmp_path: Path) -> dict:
             },
         },
     )
-    return run_evolve_infer_v1(str(config_path))
+    return run_adaptive_inference_stage(str(config_path))
 
 
-def test_review_v2_consolidates_v1_run_assets_and_blocks_v3_actions(tmp_path: Path) -> None:
+def test_review_consolidates_v1_run_assets_and_blocks_v3_actions(tmp_path: Path) -> None:
     v1_summary = _run_v1_fixture(tmp_path)
     v1_output_dir = Path(v1_summary["output_dir"])
     v2_config = _write_json(
         tmp_path / "v2_config.json",
         {
             "version": "v2",
-            "mode": "trajectory_review_coco_v2",
+            "mode": "finetune_pool_review",
             "mainline_profile": "A_DOM_ONLY",
             "source": {
                 "run_id": v1_summary["run_id"],
                 "state_db_path": str(v1_output_dir / "state.sqlite"),
                 "artifact_root": str(v1_output_dir),
             },
-            "output": {"output_dir": str(v1_output_dir / "v2_review")},
+            "output": {"output_dir": str(v1_output_dir / "review")},
             "trajectory_compression": {
                 "enabled": True,
                 "include_full_pending_candidates_in_context": False,
@@ -120,7 +120,7 @@ def test_review_v2_consolidates_v1_run_assets_and_blocks_v3_actions(tmp_path: Pa
         },
     )
 
-    report = run_review_v2(str(v2_config))
+    report = run_review_stage(str(v2_config))
 
     assert report["trajectory_count"] == 1
     assert report["invalid_trajectories"] == 0
@@ -160,22 +160,22 @@ def test_review_v2_consolidates_v1_run_assets_and_blocks_v3_actions(tmp_path: Pa
         counts = {
             table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in [
-                "v2_review_runs",
+                "review_runs",
                 "memory_records",
                 "skill_records",
                 "finetune_samples",
                 "routing_candidates",
                 "distillation_candidates",
-                "v2_review_events",
+                "review_events",
             ]
         }
         blocked_guardrails = conn.execute(
             """
-            SELECT COUNT(*) FROM v2_review_events
+            SELECT COUNT(*) FROM review_events
             WHERE review_type = 'guardrail' AND decision = 'reject'
             """
         ).fetchone()[0]
-    assert counts["v2_review_runs"] == 1
+    assert counts["review_runs"] == 1
     assert counts["memory_records"] >= 1
     assert counts["skill_records"] >= 1
     assert counts["finetune_samples"] >= 1
@@ -184,16 +184,16 @@ def test_review_v2_consolidates_v1_run_assets_and_blocks_v3_actions(tmp_path: Pa
     assert blocked_guardrails >= 5
 
 
-def test_review_v2_guardrails_reject_v3_flags_and_actions() -> None:
+def test_review_guardrails_reject_v3_flags_and_actions() -> None:
     bad_cfg = {"guardrails": {"allow_training_trigger": True}}
 
     try:
-        assert_v2_guardrails(bad_cfg)
+        assert_review_guardrails(bad_cfg)
     except ValueError as exc:
         assert "cannot start training" in str(exc)
     else:
-        raise AssertionError("V2 guardrails should reject training trigger enablement")
+        raise AssertionError("Review guardrails should reject training trigger enablement")
 
     good_cfg = {"guardrails": {"allow_training_trigger": False, "allow_routing_policy_update": False}}
-    assert not check_write_action(V2WriteAction.START_TRAINING_JOB, good_cfg).allowed
-    assert not check_write_action(V2WriteAction.UPDATE_ROUTING_POLICY, good_cfg).allowed
+    assert not check_write_action(ReviewWriteAction.START_TRAINING_JOB, good_cfg).allowed
+    assert not check_write_action(ReviewWriteAction.UPDATE_ROUTING_POLICY, good_cfg).allowed

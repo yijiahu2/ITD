@@ -12,14 +12,12 @@ from typing import Any
 
 
 _EXPORTS = {
-    "build_child_model_planning_runtime_cfg": "ITD_agent.planning.scheduler",
     "build_expert_model_planning_runtime_cfg": "ITD_agent.planning.scheduler",
     "build_finetune_training_plan": "ITD_agent.planning.scheduler",
     "build_main_model_planning_runtime_cfg": "ITD_agent.planning.scheduler",
     "build_scheduler_context": "ITD_agent.planning.scheduler",
     "extract_plan_summary": "ITD_agent.planning.scheduler",
     "extract_segmentation_params": "ITD_agent.planning.scheduler",
-    "generate_child_model_plan": "ITD_agent.planning.scheduler",
     "generate_expert_model_plan": "ITD_agent.planning.scheduler",
     "generate_adaptive_config_from_template": "ITD_agent.planning.scheduler",
     "generate_finetune_plan": "ITD_agent.planning.scheduler",

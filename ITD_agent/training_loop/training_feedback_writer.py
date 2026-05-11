@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ITD_agent.evolution.review.io_utils import write_json
+from ITD_agent.finetune_pool.review.io_utils import write_json
 from ITD_agent.training_loop.contracts import TrainingPlan, TrainingRunResult
 
 
@@ -33,8 +33,8 @@ def write_training_feedback_candidates(
     negative_lessons = _negative_lessons(sample_quality_report, replay_guard_report, dom_geometry_guard_report, promotion_decision)
     future_actions = _future_actions(sample_quality_report, dataset_card, replay_guard_report, dom_geometry_guard_report)
     memory_candidate = {
-        "feedback_id": f"memory_feedback_{model_version_id or 'v3_training'}",
-        "source_stage": "v3_training",
+        "feedback_id": f"memory_feedback_{model_version_id or 'controlled_training'}",
+        "source_stage": "controlled_training",
         "source_model_version_id": model_version_id,
         "memory_type": "training_lesson",
         "target_scope": target_scope,
@@ -44,8 +44,8 @@ def write_training_feedback_candidates(
         "status": str(feedback_cfg.get("status") or "pending_review"),
     }
     skill_candidate = {
-        "feedback_id": f"skill_feedback_{model_version_id or 'v3_training'}",
-        "source_stage": "v3_training",
+        "feedback_id": f"skill_feedback_{model_version_id or 'controlled_training'}",
+        "source_stage": "controlled_training",
         "source_model_version_id": model_version_id,
         "skill_candidate_type": "readonly_analysis_skill",
         "suggested_skill_name": f"{target_scope}_training_case_review",
@@ -76,7 +76,7 @@ def write_training_feedback_candidates(
 
 def _target_scope(plan: TrainingPlan | None) -> str:
     if not plan:
-        return "v3_training"
+        return "controlled_training"
     return "_".join(str(item) for item in [plan.target_expert_family, plan.failure_category] if item)
 
 
@@ -94,8 +94,8 @@ def _positive_lessons(
     if dom_geometry_guard_report.get("geometry_guard_passed"):
         lessons.append("DOM-only geometry guard did not detect geometry regression")
     if promotion_decision.get("decision") == "promote_to_shadow":
-        lessons.append("candidate satisfied V3 shadow gate")
-    return lessons or ["V3 generated auditable training evidence without active changes"]
+        lessons.append("candidate satisfied shadow gate")
+    return lessons or ["training_loop generated auditable training evidence without active changes"]
 
 
 def _negative_lessons(

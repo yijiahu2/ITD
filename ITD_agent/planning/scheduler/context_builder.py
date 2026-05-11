@@ -191,7 +191,7 @@ def _build_legacy_cellpose_sam_parameter_recommendation(runtime_cfg: dict[str, A
         parameter_updates["iou_merge_thr"] = max(float(parameter_updates.get("iou_merge_thr", 0.35)), 0.40)
         reasons.append("DOM 范围位于上坡位且林分密度较高，应适当提高实例合并阈值，减少破碎冠幅。")
     if global_shadow_background and not dom_shadow_aspect:
-        reasons.append("全局 DEM 背景存在阴坡特征，但当前仅作为弱约束参与子模型排序，不直接主导主模型参数。")
+        reasons.append("全局 DEM 背景存在阴坡特征，但当前仅作为弱约束参与专家模型排序，不直接主导主模型参数。")
 
     if density_mean is not None and density_mean >= 450:
         reasons.append(f"小班先验平均密度约 {density_mean:.1f} 株/公顷，属于中高密度林分。")

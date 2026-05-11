@@ -67,14 +67,12 @@ def _infer_target_expert_family(runtime_cfg: dict[str, Any], summary: dict[str, 
     explicit = str(finetune_plan.get("target_expert_family") or "").strip()
     if explicit:
         return explicit
-    expert_plan = (planning.get("expert_model_call_plan") or planning.get("child_model_call_plan") or {})
+    expert_plan = planning.get("expert_model_call_plan") or {}
     preferred_name = str(
-        expert_plan.get("preferred_expert_model")
-        or expert_plan.get("preferred_child_model")
-        or ""
+        expert_plan.get("preferred_expert_model") or ""
     ).strip()
     seg_models = (((runtime_cfg.get("ITD_agent") or {}).get("segmentation_models") or {}))
-    expert_models = (seg_models.get("expert_models") or seg_models.get("child_models") or [])
+    expert_models = seg_models.get("expert_models") or []
     for entry in expert_models:
         if not isinstance(entry, dict):
             continue

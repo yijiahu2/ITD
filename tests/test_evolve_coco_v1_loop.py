@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ITD_agent.evolution.evolve_infer_runner import run_evolve_infer_v1
+from ITD_agent.evolution.adaptive_inference import run_adaptive_inference_stage
 from ITD_agent.evolution.expert.tile_image import offset_instances_to_full_image
 from ITD_agent.evolution.fusion.local_roi_fusion import fuse_or_rollback
 from ITD_agent.evolution.roi.roi_candidate_builder import build_roi_candidates
@@ -159,7 +159,7 @@ def test_evolve_infer_v1_runs_mock_expert_writes_trajectory_state_and_training_c
     config_path = _write_json(
         tmp_path / "config.json",
         {
-            "mode": "supervised_coco_evolve_v1",
+            "mode": "adaptive_inference",
             "mainline_profile": "A_DOM_ONLY",
             "input": {
                 "annotation_json": str(gt_path),
@@ -187,7 +187,7 @@ def test_evolve_infer_v1_runs_mock_expert_writes_trajectory_state_and_training_c
         },
     )
 
-    summary = run_evolve_infer_v1(str(config_path))
+    summary = run_adaptive_inference_stage(str(config_path))
 
     assert summary["run_id"].startswith("run_")
     assert summary["trajectory_count"] == 1
@@ -264,11 +264,11 @@ def test_evolve_infer_v1_real_mode_derives_dataset_split_and_invokes_real_models
             "instances": instances,
         }
 
-    monkeypatch.setattr("ITD_agent.evolution.evolve_infer_runner.run_real_segmentation_for_sample", fake_real_segmentation)
+    monkeypatch.setattr("ITD_agent.evolution.adaptive_inference.run_real_segmentation_for_sample", fake_real_segmentation)
     config_path = _write_json(
         tmp_path / "real_config.json",
         {
-            "mode": "supervised_coco_evolve_v1",
+            "mode": "adaptive_inference",
             "mainline_profile": "A_DOM_ONLY",
             "input": {
                 "dataset_root": str(dataset_root),
@@ -303,7 +303,7 @@ def test_evolve_infer_v1_real_mode_derives_dataset_split_and_invokes_real_models
         },
     )
 
-    summary = run_evolve_infer_v1(str(config_path))
+    summary = run_adaptive_inference_stage(str(config_path))
 
     assert summary["trajectory_count"] == 1
     assert summary["totals"]["expert_tasks"] >= 1

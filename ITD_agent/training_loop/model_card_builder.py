@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ITD_agent.evolution.review.io_utils import write_json
+from ITD_agent.finetune_pool.review.io_utils import write_json
 
 
 def build_model_card(*, record: dict[str, Any], output_dir: str | Path, evidence: dict[str, Any]) -> str:

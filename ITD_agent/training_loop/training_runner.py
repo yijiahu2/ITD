@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from ITD_agent.evolution.review.io_utils import load_structured, write_csv, write_json
+from ITD_agent.finetune_pool.review.io_utils import load_structured, write_csv, write_json
 from ITD_agent.finetune_pool.dataset_exporter import export_finetune_dataset_bundle
 from ITD_agent.training_loop.dom_only_geometry_guard import evaluate_dom_only_geometry_guard
 from ITD_agent.training_loop.contracts import TrainingTriggerContext
@@ -25,21 +25,22 @@ from ITD_agent.training_loop.trainer_runner import run_training_plan
 from ITD_agent.training_loop.training_feedback_writer import write_training_feedback_candidates
 from ITD_agent.training_loop.training_bundle_materializer import materialize_training_dataset_bundle
 from ITD_agent.training_loop.training_plan_builder import build_training_plan
-from ITD_agent.training_loop.trigger_policy import evaluate_v3_training_trigger
-from ITD_agent.training_loop.v2_asset_loader import load_v2_review_assets
+from ITD_agent.training_loop.trigger_policy import evaluate_training_trigger
+from ITD_agent.training_loop.review_asset_loader import load_review_assets
 
 
-def run_training_loop_v3(config_path: str) -> dict[str, Any]:
+def run_training_loop(config_path: str) -> dict[str, Any]:
     cfg = load_structured(config_path)
     _assert_v3_guardrails(cfg)
-    output_dir = Path(str((cfg.get("runner") or {}).get("output_dir") or Path("outputs") / "v3_training"))
+    output_dir = Path(str((cfg.get("runner") or {}).get("output_dir") or Path("outputs") / "controlled_training"))
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_config_snapshots(cfg, config_path, output_dir)
 
     target = dict(cfg.get("target") or {})
     source = dict(cfg.get("source") or {})
-    v2_assets = load_v2_review_assets(v2_review_dir=source["v2_review_dir"], target_cfg=target, output_dir=output_dir)
-    finetune_bundle_result = _export_v3_finetune_bundle(cfg=cfg, v2_assets=v2_assets, target=target, output_dir=output_dir)
+    review_asset_dir = _resolve_review_asset_dir(source)
+    review_assets = load_review_assets(review_asset_dir=review_asset_dir, target_cfg=target, output_dir=output_dir)
+    finetune_bundle_result = _export_finetune_bundle(cfg=cfg, review_assets=review_assets, target=target, output_dir=output_dir)
     finetune_bundle = json.loads(Path(finetune_bundle_result["dataset_bundle_path"]).read_text(encoding="utf-8"))
 
     family_cfg = resolve_family_training_config(
@@ -58,12 +59,12 @@ def run_training_loop_v3(config_path: str) -> dict[str, Any]:
     trigger_context = _build_trigger_context(
         cfg=cfg,
         target=target,
-        v2_assets=v2_assets,
+        review_assets=review_assets,
         finetune_bundle_result=finetune_bundle_result,
         accepted_count=len(quality["accepted_samples"]),
         replay_count=len(replay_samples),
     )
-    trigger_decision = evaluate_v3_training_trigger(
+    trigger_decision = evaluate_training_trigger(
         trigger_context,
         min_training_ready=int((cfg.get("quality_gate") or {}).get("min_training_ready_samples", 100)),
         min_replay=int((cfg.get("quality_gate") or {}).get("min_replay_samples", 30)),
@@ -221,16 +222,17 @@ def run_training_loop_v3(config_path: str) -> dict[str, Any]:
         )
 
     distillation_report = build_expert_to_main_distillation_manifest(
-        distillation_candidates=list(v2_assets.get("distillation_candidates") or []),
+        distillation_candidates=list(review_assets.get("distillation_candidates") or []),
         output_dir=output_dir,
         cfg=cfg,
     )
     summary = {
-        "version": "v3",
-        "mode": "controlled_training_v3",
+        "version": "training_loop",
+        "mode": "controlled_training",
         "output_dir": str(output_dir),
         "source_run_id": source.get("run_id"),
-        "v2_review_dir": source.get("v2_review_dir"),
+        "review_asset_dir": str(review_asset_dir),
+        "finetune_pool_dir": source.get("finetune_pool_dir"),
         "trigger_decision": trigger_decision,
         "family_config": family_cfg,
         "sample_quality_report": quality["sample_quality_report"],
@@ -250,14 +252,14 @@ def run_training_loop_v3(config_path: str) -> dict[str, Any]:
         "routing_candidate_report": routing_candidate_report,
         "training_feedback_report": feedback_report,
     }
-    write_json(output_dir / "reports" / "v3_training_summary.json", summary)
-    write_csv(output_dir / "reports" / "v3_training_summary.csv", [_flatten_summary(summary)])
+    write_json(output_dir / "reports" / "training_summary.json", summary)
+    write_csv(output_dir / "reports" / "training_summary.csv", [_flatten_summary(summary)])
     return summary
 
 
-def _export_v3_finetune_bundle(*, cfg: dict[str, Any], v2_assets: dict[str, Any], target: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+def _export_finetune_bundle(*, cfg: dict[str, Any], review_assets: dict[str, Any], target: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     result = export_finetune_dataset_bundle(
-        summary={"run_name": (cfg.get("source") or {}).get("run_id") or "v3_training"},
+        summary={"run_name": (cfg.get("source") or {}).get("run_id") or "training_loop"},
         runtime_cfg={"output_dir": str(output_dir)},
         finetune_plan={
             "target_model_role": target.get("target_model_role"),
@@ -265,7 +267,7 @@ def _export_v3_finetune_bundle(*, cfg: dict[str, Any], v2_assets: dict[str, Any]
             "failure_category": target.get("failure_category"),
             "target_module": "segmentation_model",
         },
-        finetune_pool_root=v2_assets["imported_finetune_pool_root"],
+        finetune_pool_root=review_assets["imported_finetune_pool_root"],
         output_path=output_dir / "finetune_bundle" / "finetune_dataset_bundle.json",
     )
     return result
@@ -275,18 +277,18 @@ def _build_trigger_context(
     *,
     cfg: dict[str, Any],
     target: dict[str, Any],
-    v2_assets: dict[str, Any],
+    review_assets: dict[str, Any],
     finetune_bundle_result: dict[str, Any],
     accepted_count: int,
     replay_count: int,
 ) -> TrainingTriggerContext:
-    imported = list(v2_assets.get("imported_finetune_samples") or [])
+    imported = list(review_assets.get("imported_finetune_samples") or [])
     trajectory_counts = Counter(str((item.get("metadata") or {}).get("source_trajectory_id") or "unknown") for item in imported)
     max_ratio = (max(trajectory_counts.values()) / len(imported)) if imported else 0.0
     selection = dict(finetune_bundle_result.get("selection_summary") or {})
     return TrainingTriggerContext(
         source_run_id=str((cfg.get("source") or {}).get("run_id") or ""),
-        source_v2_review_dir=str((cfg.get("source") or {}).get("v2_review_dir") or ""),
+        source_review_asset_dir=str(_resolve_review_asset_dir(cfg.get("source") or {})),
         target_model_role=str(target.get("target_model_role") or "expert_model"),
         target_model_id=str(target.get("target_model_id") or ""),
         target_expert_family=target.get("target_expert_family"),
@@ -306,18 +308,29 @@ def _build_trigger_context(
     )
 
 
+def _resolve_review_asset_dir(source: dict[str, Any]) -> Path:
+    for key in ("review_asset_dir", "finetune_pool_dir"):
+        value = source.get(key)
+        if value:
+            candidate = Path(str(value))
+            if key == "finetune_pool_dir" and candidate.name == "finetune_pool":
+                return candidate.parent
+            return candidate
+    raise KeyError("source.review_asset_dir or source.finetune_pool_dir is required")
+
+
 def _assert_v3_guardrails(cfg: dict[str, Any]) -> None:
     guardrails = cfg.get("guardrails") or {}
     if bool(guardrails.get("allow_active_model_replace", False)):
-        raise ValueError("V3.1 cannot replace active model automatically")
+        raise ValueError("training_loop cannot replace active model automatically")
     if bool(guardrails.get("allow_active_routing_policy_update", False)):
-        raise ValueError("V3.1 cannot update active route_map automatically")
+        raise ValueError("training_loop cannot update active route_map automatically")
     if bool(guardrails.get("allow_active_skill_policy", False)):
-        raise ValueError("V3.1 cannot activate hard skill policy automatically")
+        raise ValueError("training_loop cannot activate hard skill policy automatically")
     if bool(guardrails.get("allow_llm_direct_training_decision", False)):
-        raise ValueError("V3.1 cannot let LLM directly decide training")
+        raise ValueError("training_loop cannot let LLM directly decide training")
     if bool(guardrails.get("allow_llm_direct_model_promotion", False)):
-        raise ValueError("V3.1 cannot let LLM directly promote model")
+        raise ValueError("training_loop cannot let LLM directly promote model")
 
 
 def _write_config_snapshots(cfg: dict[str, Any], config_path: str, output_dir: Path) -> None:
@@ -347,7 +360,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
-    print(json.dumps(run_training_loop_v3(args.config), indent=2, ensure_ascii=False))
+    print(json.dumps(run_training_loop(args.config), indent=2, ensure_ascii=False))
 
 
 def _should_run_formal_training(

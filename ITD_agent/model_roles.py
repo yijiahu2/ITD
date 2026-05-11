@@ -5,7 +5,7 @@ from typing import Any
 
 MAIN_MODEL_ROLE = "main_model"
 EXPERT_MODEL_ROLE = "expert_model"
-LEGACY_EXPERT_MODEL_ROLES = {"child_model", "child", "expert", "sub"}
+LEGACY_EXPERT_MODEL_ROLES = {"expert_model", "child", "expert", "sub"}
 
 
 def normalize_model_role(value: Any, default: str = MAIN_MODEL_ROLE) -> str:

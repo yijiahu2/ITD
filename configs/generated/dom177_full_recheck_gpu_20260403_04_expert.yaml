@@ -95,7 +95,7 @@ ITD_agent:
     main_model:
       name: legacy_cellpose_sam
       script: /home/xth/forest_agent_project/runtime_entrypoints/segmentation_legacy_cellpose_sam.py
-    child_models:
+    expert_models:
       - name: dense_canopy_template
         algorithm: mmdet_htc
         description: 面向密闭林冠、粘连严重 ROI 的 HTC 专家模型。

@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ITD_agent.evaluation_analysis.child_model_assessment import evaluate_expert_model_assessment
+from ITD_agent.evaluation_analysis.expert_model_assessment import evaluate_expert_model_assessment
 from ITD_agent.evaluation_analysis.final_assessment import evaluate_reference_quality_result
 from ITD_agent.evaluation_analysis.finetune_effect_assessment import compare_finetune_effect
 from ITD_agent.evaluation_analysis.roi_assessment import build_roi_assessment

@@ -118,11 +118,42 @@ def segmentation_to_rle(segmentation: Any, height: int, width: int) -> dict[str,
     raise ValueError(f"Unsupported segmentation type: {type(segmentation)}")
 
 
+def normalize_coco_instance(instance: dict[str, Any], *, image_id: int | str | None = None, source: str | None = None) -> dict[str, Any]:
+    bbox = instance.get("bbox") or instance.get("bbox_xywh") or [0, 0, 0, 0]
+    bbox_xywh = [float(value) for value in list(bbox)[:4]]
+    area = instance.get("area")
+    if area is None and len(bbox_xywh) >= 4:
+        area = max(0.0, bbox_xywh[2]) * max(0.0, bbox_xywh[3])
+    normalized = {
+        **dict(instance),
+        "image_id": image_id if image_id is not None else instance.get("image_id"),
+        "category_id": int(instance.get("category_id") or 1),
+        "bbox": bbox_xywh,
+        "bbox_xywh": bbox_xywh,
+        "area": float(area or 0.0),
+        "score": float(instance.get("score", 1.0)),
+    }
+    if source:
+        normalized["source"] = source
+    return normalized
+
+
+def normalize_coco_instances(
+    instances: list[dict[str, Any]],
+    *,
+    image_id: int | str | None = None,
+    source: str | None = None,
+) -> list[dict[str, Any]]:
+    return [normalize_coco_instance(item, image_id=image_id, source=source) for item in instances]
+
+
 __all__ = [
     "VALID_IMAGE_SUFFIXES",
     "build_image_index",
     "collect_coco_jsons",
     "load_merged_coco",
+    "normalize_coco_instance",
+    "normalize_coco_instances",
     "normalize_split_mapping",
     "normalize_str_list",
     "resolve_image_path",

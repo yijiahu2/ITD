@@ -16,7 +16,7 @@ def test_itd_agent_cli_exposes_only_formal_commands() -> None:
         check=True,
     )
 
-    assert "{run,review,train,state,export}" in result.stdout
+    assert "{run,evolve,evolve-infer,review,train,state,export}" in result.stdout
     assert "run_evolve_infer" not in result.stdout
     assert "review_v" not in result.stdout
     assert "training_v" not in result.stdout

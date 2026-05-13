@@ -13,6 +13,7 @@ from typing import Any
 
 _EXPORTS = {
     "apply_parameter_updates": "ITD_agent.planning.scheduler.template_manager",
+    "build_evolve_infer_plan_context": "ITD_agent.planning.scheduler.context_builder",
     "build_scheduler_context": "ITD_agent.planning.scheduler.context_builder",
     "build_expert_model_planning_runtime_cfg": "ITD_agent.planning.scheduler.runtime_scheduler",
     "build_finetune_training_plan": "ITD_agent.planning.scheduler.runtime_scheduler",

@@ -10,11 +10,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ITD_agent.evolution.adaptive_inference import run_adaptive_inference_stage
+from ITD_agent.evolution.expert.expert_task_builder import ExpertTask
 from ITD_agent.evolution.expert.tile_image import offset_instances_to_full_image
 from ITD_agent.evolution.fusion.local_roi_fusion import fuse_or_rollback
 from ITD_agent.evolution.roi.roi_candidate_builder import build_roi_candidates
 from ITD_agent.evolution.state.queries import list_pending_reviews, summarize_state
 from ITD_agent.evaluation_analysis.coco_error_decomposition import decompose_coco_errors
+from ITD_agent.evaluation_analysis.expert_result_comparator import compare_expert_with_main
 from ITD_agent.planning.scheduler.expert_routing_policy import route_expert_model
 
 
@@ -124,6 +126,44 @@ def test_local_fusion_keeps_main_instances_outside_accepted_roi() -> None:
     assert "main_keep" in fused_ids
     assert "main_replace" not in fused_ids
     assert "expert_roi" in fused_ids
+
+
+def test_expert_comparator_can_partial_accept_roi_subset() -> None:
+    task = ExpertTask(
+        expert_task_id="task_partial",
+        trajectory_id="traj_1",
+        image_id="1",
+        expert_model="mock_expert",
+        failure_family="mixed",
+        level1_error_type="false_negative",
+        roi_ids=["roi_improved", "roi_regressed"],
+        fusion_bboxes={
+            "roi_improved": [90, 90, 190, 190],
+            "roi_regressed": [290, 90, 390, 190],
+        },
+    )
+    gt_instances = [
+        {"id": "gt_1", "bbox": [100, 100, 80, 80]},
+        {"id": "gt_2", "bbox": [300, 100, 80, 80]},
+    ]
+    main_instances = [{"id": "main_2", "bbox": [300, 100, 80, 80]}]
+    expert_results = [
+        {
+            "expert_task_id": "task_partial",
+            "instances": [{"id": "expert_1", "bbox": [100, 100, 80, 80]}],
+        }
+    ]
+
+    reviews = compare_expert_with_main(
+        expert_tasks=[task],
+        expert_results=expert_results,
+        main_instances=main_instances,
+        gt_instances=gt_instances,
+    )
+
+    assert reviews[0]["decision"] == "partial_accept"
+    assert reviews[0]["accepted_roi_ids"] == ["roi_improved"]
+    assert reviews[0]["rejected_roi_ids"] == ["roi_regressed"]
 
 
 def test_expert_routing_policy_supports_primary_expert_map() -> None:

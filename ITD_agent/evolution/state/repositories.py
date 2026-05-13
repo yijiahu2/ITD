@@ -179,3 +179,26 @@ def write_state_records(*, db_path: str | Path, trajectory: dict[str, Any], traj
                 sha256_file(trajectory_path),
             ),
         )
+        for artifact_type, path in (trajectory.get("artifact_paths") or {}).items():
+            if not path:
+                continue
+            path_text = str(path)
+            if not Path(path_text).exists() or not Path(path_text).is_file():
+                continue
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO artifacts
+                (artifact_id, run_id, trajectory_id, artifact_type, path, format, metadata_json, sha256)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"artifact_{trajectory['trajectory_id']}_{artifact_type}",
+                    trajectory["run_id"],
+                    trajectory["trajectory_id"],
+                    str(artifact_type),
+                    path_text,
+                    Path(path_text).suffix.lstrip(".") or "unknown",
+                    _dump({"source": "trajectory_artifact_paths"}),
+                    sha256_file(path_text),
+                ),
+            )

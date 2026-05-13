@@ -327,3 +327,93 @@ def build_scheduler_context(
         "finetune_pool_recent_cases": load_recent_failed_cases(limit=recent_failure_limit) if allow_finetune_pool_context else [],
         "skill_context": skill_context,
     }
+
+
+def build_evolve_infer_plan_context(
+    *,
+    cfg: dict[str, Any],
+    input_manifest: dict[str, Any],
+    data_processing_context: dict[str, Any],
+    experience_context: dict[str, Any],
+) -> dict[str, Any]:
+    mainline_profile = resolve_mainline_profile(cfg)
+    capabilities = get_mainline_capabilities(mainline_profile)
+    main_model_cfg = dict(cfg.get("main_model") or {})
+    expert_models_cfg = dict(cfg.get("expert_models") or {})
+    model_configs = dict(cfg.get("model_configs") or {})
+    route_policy = dict(cfg.get("expert_routing_policy") or {})
+    public_dataset_summary = dict(data_processing_context.get("public_dataset_summary") or {})
+
+    model_profiles = []
+    for model_id, model_cfg in model_configs.items():
+        model_profiles.append(
+            {
+                "model_id": str(model_id),
+                "model_role": "expert_model" if str(model_id) != str(main_model_cfg.get("model_id")) else "main_model",
+                "segmentation_algorithm": model_cfg.get("segmentation_algorithm"),
+                "execution_mode": expert_models_cfg.get("execution_mode") if str(model_id) != str(main_model_cfg.get("model_id")) else main_model_cfg.get("execution_mode"),
+                "capability_source": "config.model_configs",
+            }
+        )
+    if main_model_cfg.get("model_id") and not any(item["model_id"] == str(main_model_cfg["model_id"]) for item in model_profiles):
+        model_profiles.append(
+            {
+                "model_id": str(main_model_cfg["model_id"]),
+                "model_role": "main_model",
+                "execution_mode": main_model_cfg.get("execution_mode", "prediction_json"),
+                "capability_source": "config.main_model",
+            }
+        )
+
+    memory_context = experience_context.get("memory_context") or {}
+    return {
+        "mainline_profile": mainline_profile,
+        "mainline_capabilities": capabilities,
+        "gt_leakage_guard": {
+            "policy": "COCO GT annotation content is only consumed by evaluation_analysis.",
+            "main_model_plan_uses_gt": False,
+            "expert_routing_uses_gt": False,
+        },
+        "input_context": {
+            "manifest_status": ((input_manifest.get("validation") or {}).get("status") or "unknown"),
+            "input_modalities": (input_manifest.get("metadata") or {}).get("input_modalities") or {},
+            "public_dataset_count": len(input_manifest.get("public_datasets") or []),
+            "public_dataset_summary": {
+                "dataset_format": public_dataset_summary.get("dataset_format"),
+                "image_count": public_dataset_summary.get("image_count"),
+                "selected_image_count": public_dataset_summary.get("selected_image_count"),
+                "category_count": public_dataset_summary.get("category_count"),
+            },
+        },
+        "experience_injection": {
+            "enabled": bool(experience_context.get("enabled", True)),
+            "recent_success_count": len(memory_context.get("recent_success") or []),
+            "recent_failure_count": len(memory_context.get("recent_failure") or []),
+            "recent_execution_count": len(memory_context.get("recent_execution") or []),
+            "skill_record_count": int((experience_context.get("skill_context") or {}).get("record_count") or 0),
+            "application_mode": "readonly_context_injection",
+        },
+        "main_model_plan": {
+            "model_id": main_model_cfg.get("model_id", "legacy_cellpose_sam"),
+            "execution_mode": main_model_cfg.get("execution_mode", "prediction_json"),
+            "planning_policy": "dom_only_coco_mainline_a",
+            "input_policy": "DOM image and configured prediction/runtime inputs only; no GT instances in prompt or model input.",
+            "repair_interface": {
+                "supported": False,
+                "reserved_decision": "retry_main_plan",
+                "reason": "Plan repair hook is reserved; current minimal path uses objective ROI escalation.",
+            },
+        },
+        "roi_strategy": {
+            "policy": dict(cfg.get("roi_policy") or {}),
+            "source": "evaluation_analysis_error_decomposition_and_geometry_review",
+            "statuses": ["record_only", "monitor", "actionable"],
+        },
+        "expert_routing_context": {
+            "policy_version": route_policy.get("version", "v1_rule_based"),
+            "route_map": route_policy.get("route_map") or route_policy.get("expert_map") or {},
+            "model_profiles": model_profiles,
+            "routing_history": experience_context.get("expert_routing_history") or [],
+            "llm_decision_policy": "LLM may explain routing only; objective rules select accept/reject/fusion.",
+        },
+    }

@@ -34,6 +34,7 @@ class WorkflowResult:
 
 def run_workflow(command: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
     commands = {
+        "evolve-infer": evolve_infer,
         "evolve": evolve,
         "run": run,
         "adaptive-inference": adaptive_inference,
@@ -65,6 +66,12 @@ def adaptive_inference(config_path: str | Path) -> dict[str, Any]:
     ctx = build_config_context(config_path)
     result = run_adaptive_workflow(config_path)
     return {"command": "adaptive-inference", "context": ctx.to_dict(), "result": result}
+
+
+def evolve_infer(config_path: str | Path) -> dict[str, Any]:
+    ctx = build_config_context(config_path)
+    result = run_adaptive_workflow(config_path)
+    return {"command": "evolve-infer", "context": ctx.to_dict(), "result": result}
 
 
 def preflight(config_path: str | Path) -> dict[str, Any]:

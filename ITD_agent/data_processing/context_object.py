@@ -55,3 +55,45 @@ def build_spatial_context_object_from_config(cfg: Dict[str, Any]) -> Dict[str, A
         "dominant_terrain_profile": spatial_summary.get("terrain_class_summary", {}),
     }
 
+
+def build_coco_public_dataset_context(
+    *,
+    annotation_json: str | Path,
+    image_root: str | Path | None = None,
+    selected_images: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload = _load_json(annotation_json)
+    images = list(payload.get("images") or [])
+    annotations = list(payload.get("annotations") or [])
+    categories = list(payload.get("categories") or [])
+    selected_ids = {str(image.get("id")) for image in (selected_images or [])}
+    selected_annotations = [
+        annotation
+        for annotation in annotations
+        if not selected_ids or str(annotation.get("image_id")) in selected_ids
+    ]
+    image_widths = [float(image.get("width") or 0.0) for image in images if image.get("width")]
+    image_heights = [float(image.get("height") or 0.0) for image in images if image.get("height")]
+    resolvable_count = None
+    if image_root:
+        root = Path(image_root)
+        resolvable_count = sum(1 for image in images if (root / str(image.get("file_name") or "")).exists()) if root.exists() else 0
+    return {
+        "dataset_format": "coco",
+        "annotation_json": str(annotation_json),
+        "image_root": str(image_root) if image_root else None,
+        "image_count": len(images),
+        "annotation_count": len(annotations),
+        "selected_image_count": len(selected_images or images),
+        "selected_annotation_count": len(selected_annotations),
+        "category_count": len(categories),
+        "categories": [{"id": item.get("id"), "name": item.get("name")} for item in categories],
+        "image_size_profile": {
+            "min_width": min(image_widths) if image_widths else None,
+            "max_width": max(image_widths) if image_widths else None,
+            "min_height": min(image_heights) if image_heights else None,
+            "max_height": max(image_heights) if image_heights else None,
+        },
+        "resolvable_image_count": resolvable_count,
+        "gt_visibility_policy": "evaluation_analysis_only",
+    }

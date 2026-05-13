@@ -459,6 +459,7 @@ def finalize_run_outputs(
     strategy_info = record_success_strategy(summary=summary)
     failure_info = record_failure_pattern(summary=summary)
     retrospective_info = record_run_retrospective(summary=summary)
+    details_csv = summary.get("details_csv") or (summary.get("evaluation") or {}).get("details_csv")
     finetune_info = register_finetune_pool_assets(
         runtime_cfg=runtime_cfg,
         summary=summary,

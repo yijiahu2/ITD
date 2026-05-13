@@ -27,7 +27,9 @@ def start_trajectory(*, run_id: str, image: dict[str, Any], annotation_json: str
         "roi_stage": {"roi_candidates": [], "roi_clusters": []},
         "expert_task_stage": {"expert_tasks": [], "routing_events": []},
         "expert_review_stage": {"expert_reviews": []},
+        "expert_decision_stage": {},
         "fusion_stage": {"fusion_events": [], "final_result_source": "main_only"},
+        "final_evaluation_stage": {},
         "pending_review_candidates": {
             "memory_candidates": [],
             "skill_candidates": [],

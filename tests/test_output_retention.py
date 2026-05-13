@@ -6,6 +6,7 @@ from input_layer.adapters import normalize_agent_runtime_config
 from ITD_agent.orchestration.output_management import (
     apply_persistent_retention,
     build_retained_summary,
+    finalize_run_outputs,
     get_retention_profile,
 )
 
@@ -184,3 +185,40 @@ def test_normalize_agent_runtime_config_forces_minimal_for_legacy_config(tmp_pat
     assert runtime_cfg["keep_debug_outputs"] is False
     assert runtime_cfg["keep_semantic_prior_artifacts"] is False
     assert runtime_cfg["cleanup_temp_runtime"] is True
+
+
+def test_finalize_run_outputs_uses_summary_details_csv_for_finetune_pool(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "ITD_agent.orchestration.output_management.build_final_deliverables",
+        lambda **kwargs: {"status": "published"},
+    )
+    monkeypatch.setattr("ITD_agent.orchestration.output_management.record_execution", lambda **kwargs: {"recorded": True})
+    monkeypatch.setattr("ITD_agent.orchestration.output_management.record_success_strategy", lambda **kwargs: {"recorded": True})
+    monkeypatch.setattr("ITD_agent.orchestration.output_management.record_failure_pattern", lambda **kwargs: {"recorded": True})
+    monkeypatch.setattr("ITD_agent.orchestration.output_management.record_run_retrospective", lambda **kwargs: {"recorded": True})
+
+    def _register_finetune_pool_assets(**kwargs: object) -> dict[str, object]:
+        captured["details_csv"] = kwargs.get("details_csv")
+        return {"registered": True}
+
+    monkeypatch.setattr(
+        "ITD_agent.orchestration.output_management.register_finetune_pool_assets",
+        _register_finetune_pool_assets,
+    )
+    monkeypatch.setattr(
+        "ITD_agent.orchestration.output_management.export_finetune_dataset_bundle",
+        lambda **kwargs: {"dataset_bundle_path": str(tmp_path / "bundle.json"), "selection_summary": {}},
+    )
+
+    details_csv = tmp_path / "evaluation_details.csv"
+    details_csv.write_text("id,score\n1,0.5\n", encoding="utf-8")
+    summary = {"details_csv": str(details_csv), "planning_scheduler": {"finetune_training_plan": {}}}
+    runtime_cfg = {"output_dir": str(tmp_path / "run"), "persistent_output_dir": str(tmp_path / "run")}
+
+    result = finalize_run_outputs(summary=summary, runtime_cfg=runtime_cfg, input_manifest={})
+
+    assert captured["details_csv"] == str(details_csv)
+    assert result["final_outputs"]["status"] == "published"
+    assert result["finetune_pool"]["registered"] is True

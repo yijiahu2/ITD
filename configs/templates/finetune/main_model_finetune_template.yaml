@@ -1,0 +1,65 @@
+experiment_name: forest_agent_main_model_finetune
+run_name: main_model_coco_finetune
+input_type: coco_dataset
+
+base_config: configs/templates/runtime/coco_dataset_runtime_template.yaml
+output_dir: outputs/finetune/main_model_coco
+
+segmentation_algorithm: maskdino_official
+target_model_role: main_model
+segmentation_dataset_dirname: external_segmentation_dataset
+segmentation_dataset_force_rebuild: true
+
+public_dataset_root: data/Dataset_4
+public_dataset_split_mapping:
+  train_4: Dataset_4_train
+  validation: Validation_set
+  val: Validation_set
+  test: Testing_set
+public_dataset_train_splits: [train_4]
+public_dataset_val_splits: [validation]
+public_dataset_test_splits: []
+public_dataset_image_dirname: images
+public_dataset_annotation_dirname: annotation
+public_dataset_include_dataset_ids_by_role:
+  train: [4]
+  val: [4]
+  test: [4]
+public_dataset_holdout_test_fraction: 0.2
+public_dataset_holdout_test_source_roles: [train, val]
+public_dataset_holdout_test_seed: 42
+
+segmentation_train_conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+segmentation_train_conda_env: maskdino
+segmentation_train_repo_root: models/maskdino
+segmentation_train_out_dirname: segmentation_training
+segmentation_train_base_config: models/maskdino/configs/maskdino_R50_bs16_50ep.yaml
+segmentation_train_init_checkpoint: models/maskdino/checkpoints/maskdino_r50.pth
+
+segmentation_class_names: [crown]
+segmentation_num_classes: 1
+segmentation_train_batch_size: 4
+segmentation_train_grad_accum_steps: 4
+segmentation_train_num_workers: 8
+segmentation_train_epochs: 50
+segmentation_train_lr: 1.0e-4
+segmentation_train_weight_decay: 0.05
+segmentation_train_amp: false
+segmentation_train_val_interval: 2
+segmentation_train_pin_memory: true
+segmentation_train_prefetch_factor: 4
+segmentation_train_device: cuda
+segmentation_train_num_gpus: 1
+segmentation_train_detections_per_image: 300
+segmentation_eval_after_train: true
+segmentation_train_resume: false
+
+segmentation_finetuned_device: cuda
+segmentation_finetuned_score_thr: 0.2
+segmentation_finetuned_min_area_px: 50
+segmentation_finetuned_min_sem_overlap_ratio: 0.01
+segmentation_finetuned_clip_to_msem: true
+segmentation_finetuned_required_outputs: [y_inst_shp]
+
+enable_rerun_after_finetune: false
+finetuned_suffix: _main_model_coco_ft_v1

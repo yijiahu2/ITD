@@ -31,6 +31,10 @@ from ITD_agent.training_loop.trigger_policy import evaluate_training_trigger
 from ITD_agent.training_loop.review_asset_loader import load_review_assets
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_TAXONOMY_PATH = str(REPO_ROOT / "configs" / "taxonomy" / "expert_families.yaml")
+
+
 def run_training_loop(config_path: str) -> dict[str, Any]:
     cfg = load_structured(config_path)
     _assert_v3_guardrails(cfg)
@@ -46,7 +50,7 @@ def run_training_loop(config_path: str) -> dict[str, Any]:
     finetune_bundle = json.loads(Path(finetune_bundle_result["dataset_bundle_path"]).read_text(encoding="utf-8"))
 
     family_cfg = resolve_family_training_config(
-        taxonomy_path=(cfg.get("expert_taxonomy") or {}).get("path", "configs/expert_taxonomy/expert_families.yaml"),
+        taxonomy_path=(cfg.get("expert_taxonomy") or {}).get("path", DEFAULT_TAXONOMY_PATH),
         target_expert_family=target.get("target_expert_family"),
         target_model_id=str(target.get("target_model_id") or ""),
         failure_category=target.get("failure_category"),

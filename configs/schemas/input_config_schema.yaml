@@ -1,0 +1,26 @@
+schema_version: 1
+allowed_input_types: [dom_image, coco_dataset]
+input_contracts:
+  dom_image:
+    allowed_blocks:
+      - inputs.remote_sensing
+    required_fields:
+      - inputs.remote_sensing.images
+  coco_dataset:
+    allowed_blocks:
+      - input
+      - inputs.public_datasets
+      - inputs.remote_sensing
+    required_one_of:
+      - input.annotation_json
+      - input.dataset_root
+      - inputs.public_datasets.datasets
+forbidden_fields:
+  - dem_tif
+  - chm_tif
+  - dsm_tif
+  - xiaoban_shp
+  - terrain
+  - canopy
+  - surface
+  - mainline_profile

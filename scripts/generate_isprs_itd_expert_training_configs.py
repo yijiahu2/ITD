@@ -12,58 +12,58 @@ from ITD_agent.segmentation.finetuning.io_utils import dump_json, dump_yaml, loa
 
 
 MODEL_SPECS = {
-    "dense_adhesion_htc": {
-        "template": "/home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_dense_adhesion_htc.yaml",
-        "family": "dense_adhesion",
+    "under_segmentation_htc": {
+        "template": str(PROJECT_ROOT / "configs" / "templates" / "finetune" / "expert_model_finetune_template.yaml"),
+        "family": "under_segmentation",
         "init_checkpoint": "/home/xth/mmdetection331/checkpoints/htc_r50_fpn_1x_coco_20200317-7332cf16.pth",
     },
-    "shadow_topography_mask2former": {
-        "template": "/home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_shadow_topography_mask2former.yaml",
-        "family": "shadow_topography",
+    "over_segmentation_mask2former": {
+        "template": str(PROJECT_ROOT / "configs" / "templates" / "finetune" / "expert_model_finetune_template.yaml"),
+        "family": "over_segmentation",
         "init_checkpoint": "/home/xth/mmdetection331/checkpoints/mask2former_r50_8xb2-lsj-50e_coco_20220506_191028-41b088b6.pth",
     },
-    "large_crown_cascade": {
-        "template": "/home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_large_crown_cascade.yaml",
-        "family": "large_crown_over_split",
+    "false_positive_cleanup_cascade": {
+        "template": str(PROJECT_ROOT / "configs" / "templates" / "finetune" / "expert_model_finetune_template.yaml"),
+        "family": "false_positive_cleanup",
         "init_checkpoint": "/home/xth/mmdetection331/checkpoints/cascade_mask_rcnn_r50_fpn_1x_coco_20200203-9d4dcb24.pth",
     },
-    "boundary_mask_scoring": {
-        "template": "/home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_boundary_mask_scoring.yaml",
-        "family": "boundary_calibration",
+    "boundary_quality_mask_scoring": {
+        "template": str(PROJECT_ROOT / "configs" / "templates" / "finetune" / "expert_model_finetune_template.yaml"),
+        "family": "boundary_quality",
         "init_checkpoint": "/home/xth/mmdetection331/checkpoints/ms_rcnn_r50_caffe_fpn_1x_coco_20200702_180848-61c9355e.pth",
     },
-    "generalist_maskdino": {
-        "template": "/home/xth/forest_agent_project/configs/templates/finetune/finetune_expert_generalist_maskdino.yaml",
-        "family": "cross_domain_generalist",
+    "missed_crown_recall_maskdino": {
+        "template": str(PROJECT_ROOT / "configs" / "templates" / "finetune" / "expert_model_finetune_template.yaml"),
+        "family": "missed_crown_recall",
         "init_checkpoint": "/home/xth/MaskDINO/weights/maskdino_r50.pth",
     },
 }
 
 DATASET_GROUPS = {
-    "dense_adhesion_htc": {
+    "under_segmentation_htc": {
         "train_ids": [4, 5, 9],
         "val_ids": [4, 5],
         "rationale": "亚热带常绿阔叶林与高密小冠幅混交场景，优先强化闭冠粘连与漏分割修复。",
     },
-    "shadow_topography_mask2former": {
+    "over_segmentation_mask2former": {
         "train_ids": [2, 3, 8],
         "val_ids": [3],
-        "rationale": "热带雨林、湿润森林、山地森林优先，利用大感受野建模阴影和复杂地形背景。",
+        "rationale": "实例碎片、重复实例和冠幅过分裂样本优先，利用大感受野恢复完整树冠。",
     },
-    "large_crown_cascade": {
+    "false_positive_cleanup_cascade": {
         "train_ids": [3, 6, 7],
         "val_ids": [3, 5],
-        "rationale": "湿润森林大冠幅、城市混交林与温带阔叶林更容易出现大冠幅过分裂，适合 Cascade 分阶段细化。",
+        "rationale": "背景误检、低置信实例和非树冠实例优先，适合 Cascade 分阶段过滤。",
     },
-    "boundary_mask_scoring": {
+    "boundary_quality_mask_scoring": {
         "train_ids": [1, 3, 7, 9],
         "val_ids": [3, 4, 5],
         "rationale": "温带混交林、湿润森林和高分辨率阔叶林边界形态复杂，适合用 Mask Scoring 做边界质量校准。",
     },
-    "generalist_maskdino": {
+    "missed_crown_recall_maskdino": {
         "train_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9],
         "val_ids": [3, 4, 5],
-        "rationale": "跨国家、跨气候带、跨林型的全域训练，用于建立未见域泛化保底专家。",
+        "rationale": "漏检、小冠幅和弱纹理树冠样本优先，用于提升召回。",
     },
 }
 

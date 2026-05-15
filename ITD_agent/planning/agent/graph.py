@@ -554,7 +554,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--base_config",
-        default="/home/xth/forest_agent_project/configs/templates/runtime/runtime_dom194_baseline.yaml",
+        default=str(Path(__file__).resolve().parents[3] / "configs" / "templates" / "runtime" / "dom_image_runtime_template.yaml"),
     )
     parser.add_argument("--max_rounds", type=int, default=3)
     parser.add_argument("--out_json", default=DEFAULT_AGENT_OUT)

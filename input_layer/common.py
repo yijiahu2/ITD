@@ -106,6 +106,8 @@ def resolve_path(path: Any, config_dir: Path | None) -> str | None:
     resolved = Path(text).expanduser()
     if resolved.is_absolute() or config_dir is None:
         return str(resolved)
+    if resolved.parts and resolved.parts[0] in {"configs", "data", "input_layer", "output_layer", "outputs", "runtime_entrypoints", "scripts", "tests", "tools", "ITD_agent", "models"}:
+        return str((Path.cwd() / resolved).resolve())
     return str((config_dir / resolved).resolve())
 
 

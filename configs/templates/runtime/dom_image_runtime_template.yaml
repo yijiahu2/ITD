@@ -1,0 +1,31 @@
+input_type: dom_image
+experiment_name: forest_agent_dom_image
+run_name: dom_image_runtime_template
+
+conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+conda_env: tcd
+work_dir: runtime_entrypoints
+
+input_image: data/sample_dom/dom_image.tif
+output_dir: outputs/runtime/dom_image_runtime_template
+metrics_json: outputs/runtime/dom_image_runtime_template/evaluation_metrics.json
+details_csv: outputs/runtime/dom_image_runtime_template/evaluation_details.csv
+
+semantic_prior_script: runtime_entrypoints/semantic_prior_segformer.py
+semantic_prior_ckpt:
+segmentation_script: runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+segmentation_algorithm: legacy_cellpose_sam
+segmentation_algorithm_cfg: {}
+
+diam_list: "160,256,384"
+tile: 2048
+overlap: 256
+tile_overlap: 0.35
+bsize: 256
+augment: true
+iou_merge_thr: 0.28
+
+grouped_inference_enabled: false
+keep_debug_outputs: false
+keep_semantic_prior_artifacts: false
+cleanup_policy: minimal

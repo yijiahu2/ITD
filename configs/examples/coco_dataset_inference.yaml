@@ -1,0 +1,203 @@
+mode: adaptive_inference
+input_type: coco_dataset
+
+input:
+  dataset_root: data/Dataset_4
+  split: validation
+  max_images: 1
+  split_mapping:
+    validation: Validation_set
+    val: Validation_set
+    train: Dataset_4_train
+  image_dirname: images
+  annotation_dirname: annotation
+
+runtime:
+  base_config: configs/templates/runtime/coco_dataset_runtime_template.yaml
+  prediction_score_mode: semantic_prior_mean_prob
+
+output_dir: outputs/examples/coco_dataset_inference
+
+main_model_runtime_config:
+  model_id: legacy_cellpose_sam
+  model_role: main_model
+  segmentation_algorithm: legacy_cellpose_sam
+  execution_mode: real
+  runtime:
+    work_dir: runtime_entrypoints
+    conda_env: tcd
+    device: cuda:0
+    prediction_score_mode: semantic_prior_mean_prob
+  stage1_semantic_prior:
+    semantic_prior_script: runtime_entrypoints/semantic_prior_segformer.py
+    semantic_prior_model: segformer
+    semantic_prior_ckpt:
+    semantic_thr: 0.5
+    semantic_tile_size: 1024
+    semantic_overlap: 0
+    save_semantic_prior_probability_tif: true
+    output_semantic_mask_name: M_sem.tif
+    output_semantic_png_name: M_sem.png
+    output_semantic_probability_name: M_sem_prob.tif
+  stage2_instance:
+    segmentation_script: runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+    backend: cellpose_sam
+    diam_list: "96,192,320"
+    tile: 1024
+    overlap: 0
+    tile_overlap: 0.35
+    bsize: 256
+    augment: true
+    iou_merge_thr: 0.24
+    niter: 0
+    use_rgb: true
+  postprocess:
+    min_area_px: auto_from_coco_area_profile
+    max_area_px: auto_from_coco_area_profile
+    min_area_m2:
+    simplify_tol: 0.1
+    remove_edge_truncated: false
+  output:
+    save_semantic_mask: true
+    save_semantic_probability: true
+    save_instance_label_tif: true
+    save_instance_vector: true
+    save_instance_color_png: true
+    save_coco_prediction_json: true
+
+expert_models:
+  execution_mode: real
+  tile_execution: true
+  default_templates:
+    htc:
+      expert_model:
+        name: htc
+        role: under_segmentation_correction
+        framework: mmdetection
+        config_file: outputs/model_registry/htc/generated_configs/mmdet_htc_public_itd.py
+        checkpoint_file: outputs/model_registry/htc/best_coco_segm_mAP.pth
+        device: cuda:0
+      input:
+        tile_size: 1024
+        tile_overlap: 0
+        keep_georeference: true
+      inference:
+        score_thr: 0.25
+        mask_thr_binary: 0.45
+        nms_iou_thr: 0.55
+        max_per_img: 500
+        batch_size: 1
+      postprocess:
+        min_area_px: 20
+        max_area_px: 300000
+        merge_tile_iou_thr: 0.45
+        mode: split_merged_crowns
+    cascade_mask_rcnn:
+      expert_model:
+        name: cascade_mask_rcnn
+        role: false_positive_cleanup
+        framework: mmdetection
+        config_file: outputs/model_registry/cascade_mask_rcnn/generated_configs/mmdet_cascade_mask_rcnn_public_itd.py
+        checkpoint_file: outputs/model_registry/cascade_mask_rcnn/best_coco_segm_mAP.pth
+        device: cuda:0
+      input:
+        tile_size: 1024
+        tile_overlap: 0
+        keep_georeference: true
+      inference:
+        score_thr: 0.5
+        mask_thr_binary: 0.5
+        nms_iou_thr: 0.45
+        max_per_img: 300
+        batch_size: 1
+      postprocess:
+        min_area_px: 50
+        max_area_px: 200000
+        min_compactness: 0.08
+        max_aspect_ratio: 4.0
+        mode: false_positive_filter
+    mask2former:
+      expert_model:
+        name: mask2former
+        role: over_segmentation_correction
+        framework: detectron2_mask2former
+        config_file: models/mask2former/configs/mask2former_r50_coco.py
+        checkpoint_file: models/mask2former/checkpoints/mask2former_r50_coco.pth
+        device: cuda:0
+      input:
+        tile_size: 1024
+        tile_overlap: 0
+        keep_georeference: true
+      inference:
+        instance_score_thr: 0.35
+        object_mask_thr: 0.45
+        overlap_thr: 0.8
+        max_instances: 200
+        batch_size: 1
+      postprocess:
+        min_area_px: 50
+        merge_fragment_iou_thr: 0.2
+        merge_fragment_boundary_gap_px: 8
+        merge_fragment_centroid_distance_px: 80
+        mode: fragment_merge
+    maskdino:
+      expert_model:
+        name: maskdino
+        role: missed_crown_recall
+        framework: maskdino_detectron2
+        config_file: models/maskdino/configs/maskdino_R50_bs16_50ep.yaml
+        checkpoint_file: models/maskdino/checkpoints/maskdino_r50.pth
+        device: cuda:0
+      input:
+        tile_size: 1024
+        tile_overlap: 0
+        keep_georeference: true
+      inference:
+        instance_score_thr: 0.2
+        object_mask_thr: 0.4
+        max_instances: 500
+        topk_per_image: 500
+        batch_size: 1
+      postprocess:
+        min_area_px: 20
+        max_area_px: 250000
+        add_new_instance_iou_thr: 0.2
+        suppress_overlap_with_main_iou_thr: 0.6
+        mode: missed_instance_recall
+
+expert_routing_policy:
+  version: v1_rule_based_coco_real
+  expert_map:
+    under_segmentation:
+      primary_expert: htc
+    over_segmentation:
+      primary_expert: mask2former
+    false_positive:
+      primary_expert: cascade_mask_rcnn
+    false_negative:
+      primary_expert: maskdino
+
+evaluation:
+  matching:
+    iou_threshold: 0.5
+    weak_overlap_threshold: 0.1
+
+adaptive_inference:
+  max_main_retries: 1
+  max_expert_rounds: 1
+  max_next_expert_trials: 0
+  min_improvement_epsilon: 0.01
+  allow_llm_direct_fusion_decision: false
+  allow_llm_direct_training_trigger: false
+
+roi_policy:
+  expert_tile_size_px: 1024
+  fusion_buffer_px: 64
+  threshold_mode: adaptive_percentile
+  min_trigger_per_tile:
+    min_failure_instances: 3
+  severe_failure_override:
+    enabled: true
+    min_severity_score: 0.75
+    min_single_failure_area_ratio: 0.03
+    min_affected_tree_ratio: 0.15

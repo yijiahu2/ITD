@@ -1,0 +1,87 @@
+input_type: coco_dataset
+
+runtime:
+  experiment_name: forest_agent_coco_smoke
+  run_name: coco_dataset_evolve_smoke
+  schedule_prepare_only: true
+  conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+  conda_env: tcd
+  work_dir: runtime_entrypoints
+
+inputs:
+  remote_sensing:
+    images:
+      - id: coco_smoke_image
+        path: data/Dataset_4/Validation_set/images/sample.tif
+        sensor: aerial_rgb
+        resolution_m: 0.1
+        crs: EPSG:4547
+        bands: [R, G, B]
+        required: false
+  public_datasets:
+    datasets:
+      - id: coco_validation
+        format: coco
+        root: data/Dataset_4/Validation_set
+        image_root: data/Dataset_4/Validation_set/images
+        annotation_path: data/Dataset_4/Validation_set/annotation/instances.json
+        required: false
+
+ITD_agent:
+  llm_gateway:
+    provider: doubao
+    enabled: false
+  planning:
+    adaptive_generation:
+      enabled: false
+      use_llm: false
+      parameter_search:
+        enabled: true
+        max_candidates: 3
+        max_pilots: 1
+        pilot_window_px: 1024
+    roi_extraction:
+      enabled: true
+      use_llm: false
+      max_rounds: 1
+      top_k: 3
+      min_problem_cases: 1
+      buffer_m: 5.0
+      strategy_mode: auto
+    config_templates:
+      runtime_template: configs/templates/runtime/coco_dataset_runtime_template.yaml
+  data_processing:
+    semantic_prior:
+      script: runtime_entrypoints/semantic_prior_segformer.py
+  segmentation_models:
+    main_model:
+      name: legacy_cellpose_sam
+      script: runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+    expert_models:
+      - name: htc
+        algorithm: mmdet_htc
+        expert_family: under_segmentation
+        failure_categories: [under_segmentation]
+        target_error_patterns: [count_under, merged_crowns]
+        runtime_overrides:
+          segmentation_algorithm: mmdet_htc
+      - name: cascade_mask_rcnn
+        algorithm: mmdet_cascade_mask_rcnn
+        expert_family: false_positive_cleanup
+        failure_categories: [false_positive]
+        target_error_patterns: [spurious_instances]
+        runtime_overrides:
+          segmentation_algorithm: mmdet_cascade_mask_rcnn
+
+segmentation:
+  diam_list: "96,192,320"
+  tile: 1024
+  overlap: 0
+  tile_overlap: 0.35
+  bsize: 256
+  augment: false
+  iou_merge_thr: 0.24
+
+outputs:
+  root_base_dir: outputs/examples
+  cleanup_policy: minimal

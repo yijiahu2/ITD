@@ -29,10 +29,10 @@ def test_executor_prefers_canonical_expert_models_block() -> None:
 
 
 def test_runtime_template_registers_boundary_calibration_expert() -> None:
-    template_path = Path("/home/xth/forest_agent_project/configs/templates/runtime/runtime_dom177_baseline.yaml")
+    template_path = PROJECT_ROOT / "configs" / "templates" / "model" / "expert_models_template.yaml"
     payload = yaml.safe_load(template_path.read_text(encoding="utf-8"))
 
-    expert_models = (((payload.get("ITD_agent") or {}).get("segmentation_models") or {}).get("expert_models")) or []
-    expert_names = {str(item.get("name")) for item in expert_models if isinstance(item, dict)}
+    default_templates = payload.get("default_templates") or {}
+    expert_names = {str(item) for item in default_templates.keys()}
 
-    assert "boundary_calibration_template" in expert_names
+    assert "mask2former" in expert_names

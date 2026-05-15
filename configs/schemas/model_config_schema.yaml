@@ -1,0 +1,27 @@
+schema_version: 1
+allowed_input_types: [dom_image, coco_dataset]
+main_model:
+  required_fields:
+    - model_id
+    - execution_mode
+    - segmentation_algorithm
+  allowed_execution_modes: [real]
+expert_models:
+  required_fields:
+    - execution_mode
+  allowed_execution_modes: [real]
+  supported_error_families:
+    - under_segmentation
+    - over_segmentation
+    - false_positive_cleanup
+    - missed_crown_recall
+    - boundary_quality
+forbidden_fields:
+  - dem_tif
+  - chm_tif
+  - dsm_tif
+  - xiaoban_shp
+  - terrain
+  - canopy
+  - surface
+  - mainline_profile

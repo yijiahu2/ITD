@@ -45,6 +45,16 @@ from ITD_agent.training_loop.sample_intake import intake_training_candidates_dry
 from ITD_agent.training_loop.trigger_policy import evaluate_dry_run_trigger
 
 
+def _normalize_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if value is None:
+        return default
+    return bool(value)
+
+
 def _load_structured(path: str | Path) -> dict[str, Any]:
     src = Path(path)
     text = src.read_text(encoding="utf-8")
@@ -91,6 +101,155 @@ def _get_model_cfg(cfg: dict[str, Any], model_id: str | None) -> dict[str, Any]:
         return {}
     model_cfgs = cfg.get("model_configs") or {}
     return dict(model_cfgs.get(model_id) or {})
+
+
+def _map_framework_to_algorithm_name(framework: str | None, model_name: str | None) -> str:
+    normalized_framework = str(framework or "").strip().lower()
+    normalized_model_name = str(model_name or "").strip().lower()
+    framework_map = {
+        "mmdetection": {
+            "htc": "mmdet_htc",
+            "cascade_mask_rcnn": "mmdet_cascade_mask_rcnn",
+            "mask_scoring_rcnn": "mmdet_mask_scoring_rcnn",
+        },
+        "detectron2_mask2former": {
+            "mask2former": "mmdet_mask2former",
+        },
+        "maskdino_detectron2": {
+            "maskdino": "maskdino_official",
+        },
+    }
+    if normalized_framework in framework_map and normalized_model_name in framework_map[normalized_framework]:
+        return framework_map[normalized_framework][normalized_model_name]
+    fallback_by_name = {
+        "htc": "mmdet_htc",
+        "cascade_mask_rcnn": "mmdet_cascade_mask_rcnn",
+        "mask2former": "mmdet_mask2former",
+        "maskdino": "maskdino_official",
+    }
+    return fallback_by_name.get(normalized_model_name, normalized_model_name or "legacy_cellpose_sam")
+
+
+def _materialize_default_main_model_cfg(template_cfg: dict[str, Any]) -> dict[str, Any]:
+    runtime_cfg = dict(template_cfg.get("runtime") or {})
+    stage1_cfg = dict(template_cfg.get("stage1_semantic_prior") or {})
+    stage2_cfg = dict(template_cfg.get("stage2_instance") or {})
+    output_cfg = dict(template_cfg.get("output") or {})
+    runtime_overrides: dict[str, Any] = {}
+
+    for source in [runtime_cfg, stage1_cfg, stage2_cfg, output_cfg]:
+        runtime_overrides.update(
+            {
+                key: value
+                for key, value in source.items()
+                if value not in (None, "")
+            }
+        )
+
+    return {
+        "model_id": str(template_cfg.get("model_id") or "legacy_cellpose_sam"),
+        "execution_mode": "real",
+        "segmentation_algorithm": str(template_cfg.get("segmentation_algorithm") or "legacy_cellpose_sam"),
+        "runtime_overrides": runtime_overrides,
+    }
+
+
+def _materialize_default_expert_template(template_cfg: dict[str, Any]) -> dict[str, Any]:
+    expert_model_cfg = dict(template_cfg.get("expert_model") or {})
+    input_cfg = dict(template_cfg.get("input") or {})
+    inference_cfg = dict(template_cfg.get("inference") or {})
+    postprocess_cfg = dict(template_cfg.get("postprocess") or {})
+    expert_name = str(expert_model_cfg.get("name") or "")
+    algorithm_name = _map_framework_to_algorithm_name(expert_model_cfg.get("framework"), expert_name)
+    segmentation_algorithm_cfg = {
+        "config_file": expert_model_cfg.get("config_file"),
+        "checkpoint": expert_model_cfg.get("checkpoint_file"),
+        "device": expert_model_cfg.get("device"),
+        "score_thr": inference_cfg.get("instance_score_thr", inference_cfg.get("score_thr")),
+        "tile_size": input_cfg.get("tile_size"),
+        "tile_overlap": input_cfg.get("tile_overlap"),
+        "tile_batch_size": inference_cfg.get("batch_size"),
+        "merge_iou_thr": postprocess_cfg.get("merge_tile_iou_thr", inference_cfg.get("nms_iou_thr")),
+        "min_area_px": postprocess_cfg.get("min_area_px"),
+        "max_instances": inference_cfg.get("max_instances", inference_cfg.get("max_per_img", inference_cfg.get("topk_per_image"))),
+        "max_area_px": postprocess_cfg.get("max_area_px"),
+        "mask_thr_binary": inference_cfg.get("mask_thr_binary"),
+        "object_mask_thr": inference_cfg.get("object_mask_thr"),
+        "overlap_thr": inference_cfg.get("overlap_thr"),
+        "min_compactness": postprocess_cfg.get("min_compactness"),
+        "max_aspect_ratio": postprocess_cfg.get("max_aspect_ratio"),
+        "mode": postprocess_cfg.get("mode"),
+    }
+    return {
+        "model_id": expert_name,
+        "segmentation_algorithm": algorithm_name,
+        "segmentation_algorithm_cfg": {key: value for key, value in segmentation_algorithm_cfg.items() if value not in (None, "")},
+    }
+
+
+def _inject_real_only_default_templates(cfg: dict[str, Any]) -> dict[str, Any]:
+    normalized_cfg = dict(cfg)
+    main_template = normalized_cfg.pop("main_model_runtime_config", None)
+    if isinstance(main_template, dict):
+        normalized_cfg["main_model"] = _materialize_default_main_model_cfg(main_template)
+        runtime_block = dict(normalized_cfg.get("runtime") or {})
+        template_runtime = dict(main_template.get("runtime") or {})
+        if "prediction_score_mode" in template_runtime and template_runtime["prediction_score_mode"] not in (None, ""):
+            runtime_block["prediction_score_mode"] = template_runtime["prediction_score_mode"]
+        normalized_cfg["runtime"] = runtime_block
+
+    expert_models_cfg = dict(normalized_cfg.get("expert_models") or {})
+    default_templates = expert_models_cfg.get("default_templates")
+    model_configs = dict(normalized_cfg.get("model_configs") or {})
+    if isinstance(default_templates, dict):
+        for model_name, template in default_templates.items():
+            if not isinstance(template, dict):
+                continue
+            materialized = _materialize_default_expert_template(template)
+            model_configs[str(model_name)] = {
+                **model_configs.get(str(model_name), {}),
+                **materialized,
+            }
+    if model_configs:
+        normalized_cfg["model_configs"] = model_configs
+    if expert_models_cfg:
+        expert_models_cfg["execution_mode"] = "real"
+        normalized_cfg["expert_models"] = expert_models_cfg
+    return normalized_cfg
+
+
+def _require_real_only_modes(cfg: dict[str, Any]) -> None:
+    main_cfg = cfg.get("main_model") or {}
+    expert_cfg = cfg.get("expert_models") or {}
+    main_mode = str(main_cfg.get("execution_mode") or "").strip().lower()
+    expert_mode = str(expert_cfg.get("execution_mode") or "").strip().lower()
+    if main_mode != "real":
+        raise ValueError(f"main_model.execution_mode must be 'real', got: {main_cfg.get('execution_mode')!r}")
+    if expert_mode != "real":
+        raise ValueError(f"expert_models.execution_mode must be 'real', got: {expert_cfg.get('execution_mode')!r}")
+
+
+def _validate_real_runtime_dependencies(cfg: dict[str, Any]) -> None:
+    runtime_cfg = cfg.get("runtime") or {}
+    base_config = runtime_cfg.get("base_config")
+    if not base_config:
+        raise ValueError("runtime.base_config is required for real-only adaptive_inference")
+
+    main_cfg = cfg.get("main_model") or {}
+    if not str(main_cfg.get("model_id") or "").strip():
+        raise ValueError("main_model.model_id is required for real-only adaptive_inference")
+
+    expert_cfg = cfg.get("expert_models") or {}
+    default_templates = expert_cfg.get("default_templates")
+    if not isinstance(default_templates, dict) or not default_templates:
+        raise ValueError("expert_models.default_templates is required and must define at least one expert template")
+
+
+def _ensure_routed_models_are_configured(tasks: list[Any], cfg: dict[str, Any]) -> None:
+    configured_models = {str(name) for name in (cfg.get("model_configs") or {}).keys()}
+    missing = sorted({str(task.expert_model) for task in tasks if str(task.expert_model) not in configured_models})
+    if missing:
+        raise ValueError(f"expert_routing_policy routed to unconfigured expert model(s): {', '.join(missing)}")
 
 
 def _preview(values: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
@@ -762,6 +921,7 @@ def _run_one_sample(
             routing_policy=cfg.get("expert_routing_policy") or {},
             execution_mode=execution_mode,
         )
+        _ensure_routed_models_are_configured(tasks, cfg)
         trajectory["expert_task_stage"] = {
             "expert_tasks": [task.to_dict() for task in tasks],
             "routing_events": [task.routing_event for task in tasks],
@@ -867,9 +1027,11 @@ def _run_one_sample(
 
 
 def run_adaptive_inference_stage(config_path: str) -> dict[str, Any]:
-    cfg = _load_structured(config_path)
+    cfg = _inject_real_only_default_templates(_load_structured(config_path))
     cfg["mainline_profile"] = normalize_mainline_profile(cfg.get("mainline_profile") or A_DOM_ONLY)
+    _require_real_only_modes(cfg)
     cfg["input"] = derive_dataset_input(cfg.get("input") or {})
+    _validate_real_runtime_dependencies(cfg)
     output_dir = Path(cfg.get("output_dir") or "outputs/adaptive_inference")
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"

@@ -9,6 +9,7 @@ import rasterio
 from rasterio.errors import RasterioIOError
 from rasterio.shutil import copy as rasterio_copy
 
+from input_layer.common import resolve_path
 from input_layer.contracts import DomInputContract, PreparedAsset, PreparedInputIndex
 
 
@@ -18,13 +19,19 @@ def _workspace_root(cfg: dict[str, Any], config_path: str | None = None) -> Path
         return Path(str(output_dir)).expanduser().resolve()
 
     outputs = cfg.get("outputs") or {}
+    config_dir = Path(config_path).expanduser().resolve().parent if config_path else None
     root_dir = outputs.get("root_dir")
     if root_dir:
-        return Path(str(root_dir)).expanduser().resolve()
+        return Path(str(resolve_path(root_dir, config_dir))).expanduser().resolve()
+    root_base_dir = outputs.get("root_base_dir")
+    if root_base_dir:
+        runtime = cfg.get("runtime") or {}
+        run_name = runtime.get("run_name") or cfg.get("run_name") or "itd_agent_run"
+        return (Path(str(resolve_path(root_base_dir, config_dir))).expanduser() / str(run_name)).resolve()
 
     runtime = cfg.get("runtime") or {}
     run_name = runtime.get("run_name") or cfg.get("run_name") or "itd_agent_run"
-    project_root = Path(config_path).expanduser().resolve().parent if config_path else Path.cwd()
+    project_root = Path.cwd()
     return (project_root / "outputs" / str(run_name)).resolve()
 
 

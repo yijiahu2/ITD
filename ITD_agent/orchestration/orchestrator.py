@@ -614,7 +614,42 @@ def run_itd_agent_runtime(config_path: str) -> dict[str, Any]:
 
 
 def run_itd_agent(config_path: str) -> dict[str, Any]:
-    _, runtime_config_path = prepare_runtime_config(config_path)
+    raw_cfg = load_raw_yaml(config_path)
+    prepare_only = bool((raw_cfg.get("runtime") or {}).get("config_prepare_only") or raw_cfg.get("config_prepare_only"))
+    schedule_prepare_only = bool((raw_cfg.get("runtime") or {}).get("schedule_prepare_only") or raw_cfg.get("schedule_prepare_only"))
+    runtime_cfg, runtime_config_path = prepare_runtime_config(config_path)
+    if prepare_only or schedule_prepare_only:
+        result: dict[str, Any] = {
+            "status": "prepared",
+            "config_path": config_path,
+            "runtime_config_path": runtime_config_path,
+            "output_dir": runtime_cfg["output_dir"],
+            "persistent_output_dir": runtime_cfg.get("persistent_output_dir"),
+            "input_type": runtime_cfg.get("input_type"),
+            "input_validation": runtime_cfg.get("_input_validation"),
+            "input_profile": runtime_cfg.get("_input_profile"),
+        }
+        if schedule_prepare_only:
+            output_dir = Path(runtime_cfg["output_dir"]).resolve()
+            planning_root = output_dir / "planning_scheduler"
+            ensure_dir(planning_root)
+            input_manifest_dict = runtime_cfg.get("_input_manifest") or {}
+            plan = generate_main_model_plan(
+                cfg=runtime_cfg,
+                template_path=_get_template_path(runtime_cfg, runtime_config_path),
+                planning_root=planning_root,
+                input_assessment=_build_input_assessment_compat(input_manifest_dict),
+                input_manifest=input_manifest_dict,
+                data_processing_summary={"status": "schedule_prepare_only"},
+            )
+            result["status"] = "scheduled"
+            result["main_model_plan"] = {
+                "generated_config_path": plan.get("generated_config_path"),
+                "runtime_plan": plan.get("runtime_plan"),
+                "roi_refine_plan": plan.get("roi_refine_plan"),
+                "expert_model_call_plan": plan.get("expert_model_call_plan"),
+            }
+        return result
     return run_itd_agent_runtime(runtime_config_path)
 
 

@@ -91,7 +91,7 @@ def test_training_loop_builds_controlled_pilot_from_review_assets(tmp_path: Path
                 "target_expert_family": "dense_adhesion",
                 "failure_category": "false_negative",
             },
-            "expert_taxonomy": {"path": "configs/expert_taxonomy/expert_families.yaml"},
+            "expert_taxonomy": {"path": "configs/taxonomy/expert_families.yaml"},
             "dataset": {"train_ratio": 0.7, "val_ratio": 0.15, "build_replay": True},
             "quality_gate": {
                 "min_training_ready_samples": 1,

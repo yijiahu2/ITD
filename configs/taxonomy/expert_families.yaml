@@ -1,0 +1,138 @@
+taxonomy_version: 2
+default_expert_family: under_segmentation
+
+expert_families:
+  - family_id: under_segmentation
+    display_name: Under Segmentation Expert
+    description: Corrects merged crowns and tree-count underestimation in dense crown regions.
+    algorithms_priority: [mmdet_htc, maskdino_official]
+    selection_rules:
+      scene_tags: [dense, overlap, adhesion, merged_crowns]
+      failure_categories: [under_segmentation, dense_crown_merge, count_underestimate]
+      error_patterns: [count_under, merged_crowns, closure_low]
+      roi_signal_tags: [merged_instance, weak_boundary_between_crowns]
+    template_candidates:
+      mmdet_htc: configs/templates/finetune/expert_model_finetune_template.yaml
+      maskdino_official: configs/templates/finetune/expert_model_finetune_template.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 8
+      batch_size: 1
+      num_workers: 4
+      lr: 0.0001
+      weight_decay: 0.0001
+      supervision_mode: hybrid
+      dataset_wrapper: {type: RepeatDataset, times: 2}
+      curriculum_mode: hard_case_first
+      replay_ratio: 0.35
+      hard_case_ratio: 0.55
+      prior_axes: [crown_density, overlap, boundary]
+
+  - family_id: over_segmentation
+    display_name: Over Segmentation Expert
+    description: Merges fragmented crowns and reduces tree-count overestimation.
+    algorithms_priority: [mmdet_mask2former, mmdet_mask_scoring_rcnn]
+    selection_rules:
+      scene_tags: [fragmented, large_crown, open_crown]
+      failure_categories: [over_segmentation, fragmented_crown, count_overestimate]
+      error_patterns: [count_over, fragmented_masks, closure_high]
+      roi_signal_tags: [split_instance, duplicate_fragments]
+    template_candidates:
+      mmdet_mask2former: configs/templates/finetune/expert_model_finetune_template.yaml
+      mmdet_mask_scoring_rcnn: configs/templates/finetune/expert_model_finetune_template.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 8
+      batch_size: 1
+      num_workers: 4
+      lr: 6.25e-06
+      weight_decay: 0.05
+      supervision_mode: hybrid
+      dataset_wrapper: {type: ClassBalancedDataset, oversample_thr: 0.001}
+      curriculum_mode: fragment_merge_first
+      replay_ratio: 0.30
+      hard_case_ratio: 0.50
+      prior_axes: [fragmentation, crown_size, duplicate_ratio]
+
+  - family_id: false_positive_cleanup
+    display_name: False Positive Cleanup Expert
+    description: Removes background, shadow-like, and non-crown instances from predictions.
+    algorithms_priority: [mmdet_cascade_mask_rcnn, mmdet_mask_scoring_rcnn]
+    selection_rules:
+      scene_tags: [background_noise, spurious_instance, low_confidence]
+      failure_categories: [false_positive, background_instance, roi_outside_false_positive]
+      error_patterns: [precision_low, spurious_instances]
+      roi_signal_tags: [outside_crown_candidate, low_semantic_overlap]
+    template_candidates:
+      mmdet_cascade_mask_rcnn: configs/templates/finetune/expert_model_finetune_template.yaml
+      mmdet_mask_scoring_rcnn: configs/templates/finetune/expert_model_finetune_template.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 6
+      batch_size: 1
+      num_workers: 4
+      lr: 0.00125
+      weight_decay: 0.0001
+      supervision_mode: hybrid
+      dataset_wrapper: {type: ClassBalancedDataset, oversample_thr: 0.001}
+      curriculum_mode: false_positive_first
+      replay_ratio: 0.40
+      hard_case_ratio: 0.45
+      prior_axes: [precision, semantic_overlap, compactness]
+
+  - family_id: missed_crown_recall
+    display_name: Missed Crown Recall Expert
+    description: Recovers omitted single-tree crowns and improves recall on weak or small crowns.
+    algorithms_priority: [maskdino_official, mmdet_htc]
+    selection_rules:
+      scene_tags: [small_crown, weak_contrast, omitted_instance]
+      failure_categories: [missed_crown_recall, false_negative, count_underestimate]
+      error_patterns: [recall_low, count_under, missing_instances]
+      roi_signal_tags: [uncovered_reference, weak_semantic_prior]
+    template_candidates:
+      maskdino_official: configs/templates/finetune/expert_model_finetune_template.yaml
+      mmdet_htc: configs/templates/finetune/expert_model_finetune_template.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 8
+      batch_size: 1
+      num_workers: 4
+      lr: 0.0001
+      weight_decay: 0.05
+      supervision_mode: hybrid
+      dataset_wrapper: {type: RepeatDataset, times: 2}
+      curriculum_mode: recall_first
+      replay_ratio: 0.35
+      hard_case_ratio: 0.60
+      prior_axes: [recall, small_crowns, weak_contrast]
+
+  - family_id: boundary_quality
+    display_name: Boundary Quality Expert
+    description: Improves mask contour quality, crown boundary alignment, and shape calibration.
+    algorithms_priority: [mmdet_mask_scoring_rcnn, mmdet_mask2former]
+    selection_rules:
+      scene_tags: [boundary, contour, mask_quality]
+      failure_categories: [boundary_quality, boundary_score_mismatch, crown_boundary_fragmented]
+      error_patterns: [boundary_error, mask_iou_low, crown_width_error]
+      roi_signal_tags: [low_iou, boundary_mismatch, contour_noise]
+    template_candidates:
+      mmdet_mask_scoring_rcnn: configs/templates/finetune/expert_model_finetune_template.yaml
+      mmdet_mask2former: configs/templates/finetune/expert_model_finetune_template.yaml
+    training_defaults:
+      train_mode: head_only
+      freeze_backbone: true
+      epochs: 6
+      batch_size: 1
+      num_workers: 4
+      lr: 0.00125
+      weight_decay: 0.0001
+      supervision_mode: hybrid
+      dataset_wrapper: {type: ClassBalancedDataset, oversample_thr: 0.001}
+      curriculum_mode: boundary_quality_first
+      replay_ratio: 0.25
+      hard_case_ratio: 0.50
+      prior_axes: [boundary, shape_quality, mask_iou]

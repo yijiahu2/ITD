@@ -22,10 +22,32 @@ from input_layer.vector import parse_vector_sources
 from input_layer.validators import validate_input_manifest
 
 
+ALLOWED_INPUT_TYPES = {"dom_image", "coco_dataset"}
+FORBIDDEN_INPUT_FIELDS = {
+    "dem_tif",
+    "chm_tif",
+    "dsm_tif",
+    "xiaoban_shp",
+    "terrain",
+    "canopy",
+    "surface",
+    "mainline_profile",
+}
+
+
 def _config_dir(config_path: str | None) -> Path | None:
     if not config_path:
         return None
     return Path(config_path).expanduser().resolve().parent
+
+
+def _display_path(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except Exception:
+        return str(path)
 
 
 def _resolve_output_path(path: Any, config_dir: Path | None) -> str | None:
@@ -37,6 +59,196 @@ def _enforce_minimal_retention(runtime_cfg: dict[str, Any]) -> None:
     runtime_cfg["keep_debug_outputs"] = False
     runtime_cfg["keep_semantic_prior_artifacts"] = False
     runtime_cfg["cleanup_temp_runtime"] = True
+
+
+def _iter_forbidden_field_hits(mapping: Any, *, prefix: str = "") -> list[str]:
+    if not isinstance(mapping, dict):
+        return []
+    hits: list[str] = []
+    for key, value in mapping.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if key in FORBIDDEN_INPUT_FIELDS:
+            hits.append(path)
+        if isinstance(value, dict):
+            hits.extend(_iter_forbidden_field_hits(value, prefix=path))
+        elif isinstance(value, list):
+            for idx, item in enumerate(value):
+                hits.extend(_iter_forbidden_field_hits(item, prefix=f"{path}[{idx}]"))
+    return hits
+
+
+def _validate_supported_input_contract(cfg: dict[str, Any]) -> str:
+    input_type = str(
+        cfg.get("input_type")
+        or (cfg.get("runtime") or {}).get("input_type")
+        or (cfg.get("inputs") or {}).get("input_type")
+        or ""
+    ).strip()
+    if not input_type:
+        inputs = cfg.get("inputs") or {}
+        if inputs.get("public_datasets"):
+            input_type = "coco_dataset"
+        else:
+            input_type = "dom_image"
+    if input_type not in ALLOWED_INPUT_TYPES:
+        raise ValueError(f"Unsupported input_type={input_type!r}. Allowed values: {sorted(ALLOWED_INPUT_TYPES)}")
+
+    hits = _iter_forbidden_field_hits(cfg.get("inputs") or {})
+    if hits:
+        raise ValueError("Unsupported input fields for current product boundary: " + ", ".join(sorted(hits)))
+    return input_type
+
+
+def _normalize_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _map_framework_to_algorithm_name(framework: str | None, model_name: str | None) -> str:
+    normalized_framework = str(framework or "").strip().lower()
+    normalized_model_name = str(model_name or "").strip().lower()
+    framework_map = {
+        "mmdetection": {
+            "htc": "mmdet_htc",
+            "cascade_mask_rcnn": "mmdet_cascade_mask_rcnn",
+            "mask_scoring_rcnn": "mmdet_mask_scoring_rcnn",
+        },
+        "detectron2_mask2former": {
+            "mask2former": "mmdet_mask2former",
+        },
+        "maskdino_detectron2": {
+            "maskdino": "maskdino_official",
+        },
+    }
+    if normalized_framework in framework_map and normalized_model_name in framework_map[normalized_framework]:
+        return framework_map[normalized_framework][normalized_model_name]
+    fallback_by_name = {
+        "htc": "mmdet_htc",
+        "cascade_mask_rcnn": "mmdet_cascade_mask_rcnn",
+        "mask2former": "mmdet_mask2former",
+        "maskdino": "maskdino_official",
+    }
+    return fallback_by_name.get(normalized_model_name, normalized_model_name or "legacy_cellpose_sam")
+
+
+def _materialize_main_model_runtime_template(template_cfg: dict[str, Any]) -> dict[str, Any]:
+    execution_mode = str(template_cfg.get("execution_mode") or "").strip().lower()
+    if execution_mode != "real":
+        raise ValueError(f"main_model_runtime_config.execution_mode must be 'real', got: {template_cfg.get('execution_mode')!r}")
+
+    runtime_section = dict(template_cfg.get("runtime") or {})
+    stage1_section = dict(template_cfg.get("stage1_semantic_prior") or {})
+    stage2_section = dict(template_cfg.get("stage2_instance") or {})
+    output_section = dict(template_cfg.get("output") or {})
+    runtime_overrides: dict[str, Any] = {}
+    for source in [runtime_section, stage1_section, stage2_section, output_section]:
+        runtime_overrides.update({key: value for key, value in source.items() if value not in (None, "")})
+
+    return {
+        "main_model": {
+            "model_id": str(template_cfg.get("model_id") or "legacy_cellpose_sam"),
+            "execution_mode": "real",
+            "segmentation_algorithm": str(template_cfg.get("segmentation_algorithm") or "legacy_cellpose_sam"),
+            "runtime_overrides": runtime_overrides,
+            "device": runtime_section.get("device"),
+        },
+        "runtime_updates": {
+            key: value
+            for key, value in {
+                "work_dir": runtime_section.get("work_dir"),
+                "conda_env": runtime_section.get("conda_env"),
+                "prediction_score_mode": runtime_section.get("prediction_score_mode"),
+            }.items()
+            if value not in (None, "")
+        },
+    }
+
+
+def _materialize_expert_model_template(template_cfg: dict[str, Any]) -> dict[str, Any]:
+    expert_model_cfg = dict(template_cfg.get("expert_model") or {})
+    input_cfg = dict(template_cfg.get("input") or {})
+    inference_cfg = dict(template_cfg.get("inference") or {})
+    postprocess_cfg = dict(template_cfg.get("postprocess") or {})
+    expert_name = str(expert_model_cfg.get("name") or "")
+    segmentation_algorithm = _map_framework_to_algorithm_name(expert_model_cfg.get("framework"), expert_name)
+    segmentation_algorithm_cfg = {
+        "config_file": expert_model_cfg.get("config_file"),
+        "checkpoint": expert_model_cfg.get("checkpoint_file"),
+        "device": expert_model_cfg.get("device"),
+        "score_thr": inference_cfg.get("instance_score_thr", inference_cfg.get("score_thr")),
+        "tile_size": input_cfg.get("tile_size"),
+        "tile_overlap": input_cfg.get("tile_overlap"),
+        "tile_batch_size": inference_cfg.get("batch_size"),
+        "merge_iou_thr": postprocess_cfg.get("merge_tile_iou_thr", inference_cfg.get("nms_iou_thr")),
+        "min_area_px": postprocess_cfg.get("min_area_px"),
+        "max_instances": inference_cfg.get("max_instances", inference_cfg.get("max_per_img", inference_cfg.get("topk_per_image"))),
+        "max_area_px": postprocess_cfg.get("max_area_px"),
+        "mask_thr_binary": inference_cfg.get("mask_thr_binary"),
+        "object_mask_thr": inference_cfg.get("object_mask_thr"),
+        "overlap_thr": inference_cfg.get("overlap_thr"),
+        "min_compactness": postprocess_cfg.get("min_compactness"),
+        "max_aspect_ratio": postprocess_cfg.get("max_aspect_ratio"),
+        "mode": postprocess_cfg.get("mode"),
+    }
+    return {
+        "model_id": expert_name,
+        "segmentation_algorithm": segmentation_algorithm,
+        "segmentation_algorithm_cfg": {key: value for key, value in segmentation_algorithm_cfg.items() if value not in (None, "")},
+    }
+
+
+def _inject_default_inference_templates(cfg: dict[str, Any]) -> dict[str, Any]:
+    runtime_cfg = deepcopy(cfg)
+    main_template = runtime_cfg.get("main_model_runtime_config")
+    expert_models_raw = runtime_cfg.get("expert_models")
+    expert_templates = None
+    if isinstance(expert_models_raw, dict) and "default_templates" in expert_models_raw:
+        expert_templates = expert_models_raw.get("default_templates")
+    if not isinstance(main_template, dict) and expert_templates is None:
+        return runtime_cfg
+
+    materialized: dict[str, Any] = {"main_model": {}, "expert_models": {"execution_mode": "real"}, "model_configs": {}}
+    if isinstance(main_template, dict):
+        main_payload = _materialize_main_model_runtime_template(main_template)
+        runtime_cfg["main_model"] = main_payload["main_model"]
+        runtime_block = dict(runtime_cfg.get("runtime") or {})
+        runtime_block.update(main_payload["runtime_updates"])
+        runtime_cfg["runtime"] = runtime_block
+        materialized["main_model"] = dict(main_payload["main_model"])
+
+    expert_models_cfg = dict(runtime_cfg.get("expert_models") or {})
+    if expert_models_cfg:
+        execution_mode = str(expert_models_cfg.get("execution_mode") or "").strip().lower()
+        if execution_mode and execution_mode != "real":
+            raise ValueError(f"expert_models.execution_mode must be 'real', got: {expert_models_cfg.get('execution_mode')!r}")
+        expert_models_cfg["execution_mode"] = "real"
+
+    model_configs = dict(runtime_cfg.get("model_configs") or {})
+    if isinstance(expert_templates, dict):
+        if not expert_templates:
+            raise ValueError("expert_models.default_templates must define at least one expert template")
+        for model_name, template in expert_templates.items():
+            if not isinstance(template, dict):
+                continue
+            materialized_template = _materialize_expert_model_template(template)
+            model_configs[str(model_name)] = {
+                **model_configs.get(str(model_name), {}),
+                **materialized_template,
+            }
+            materialized["model_configs"][str(model_name)] = dict(materialized_template)
+    if model_configs:
+        runtime_cfg["model_configs"] = model_configs
+    if expert_models_cfg:
+        runtime_cfg["expert_models"] = expert_models_cfg
+        materialized["expert_models"] = dict(expert_models_cfg)
+
+    runtime_cfg["_default_inference_templates"] = materialized
+    return runtime_cfg
 
 
 def build_input_manifest(
@@ -69,7 +281,7 @@ def build_input_manifest(
         public_datasets=parse_public_datasets(public_cfg, cfg, config_dir),
         metadata={
             "schema_version": "itd_input_v1",
-            "config_dir": str(config_dir) if config_dir else None,
+            "config_dir": _display_path(config_dir),
             "mainline_profile": mainline_profile,
             "mainline_capabilities": get_mainline_capabilities(mainline_profile),
         },
@@ -98,12 +310,14 @@ def normalize_agent_runtime_config(
     cfg: dict[str, Any],
     config_path: str | None = None,
 ) -> tuple[dict[str, Any], InputManifest]:
-    runtime_cfg = deepcopy(cfg)
+    runtime_cfg = _inject_default_inference_templates(cfg)
+    input_type = _validate_supported_input_contract(runtime_cfg)
     config_dir = _config_dir(config_path)
     mainline_profile = resolve_mainline_profile(runtime_cfg)
     mainline_capabilities = get_mainline_capabilities(mainline_profile)
     manifest = build_input_manifest(runtime_cfg, config_path=config_path)
 
+    runtime_cfg["input_type"] = input_type
     runtime_cfg["mainline_profile"] = mainline_profile
     runtime_cfg["_mainline_capabilities"] = mainline_capabilities
 
@@ -229,6 +443,7 @@ def normalize_agent_runtime_config(
         runtime_cfg["llm_base_url"] = llm_gateway.get("base_url")
 
     semantic_prior_script = first_non_empty(
+        (runtime_cfg.get("main_model") or {}).get("runtime_overrides", {}).get("semantic_prior_script"),
         semantic_prior_cfg.get("script"),
         semantic_prior_cfg.get("runner"),
         model_cfg.get("semantic_prior_script"),
@@ -238,6 +453,7 @@ def normalize_agent_runtime_config(
         runtime_cfg["semantic_prior_script"] = str(semantic_prior_script)
 
     segmentation_script = first_non_empty(
+        (runtime_cfg.get("main_model") or {}).get("runtime_overrides", {}).get("segmentation_script"),
         main_model_cfg.get("script"),
         main_model_cfg.get("runner"),
         model_cfg.get("segmentation_script"),
@@ -248,7 +464,9 @@ def normalize_agent_runtime_config(
 
     for key in ["segmentation_algorithm", "segmentation_algorithm_module", "semantic_prior_ckpt"]:
         value = first_non_empty(
+            (runtime_cfg.get("main_model") or {}).get(key),
             main_model_cfg.get(key),
+            (runtime_cfg.get("main_model") or {}).get("runtime_overrides", {}).get(key),
             semantic_prior_cfg.get(key),
             model_cfg.get(key),
             segmentation_models.get(key),
@@ -267,8 +485,33 @@ def normalize_agent_runtime_config(
         "iou_merge_thr",
     ]:
         value = first_non_empty(segmentation.get(key), runtime_cfg.get(key))
+        if value is None:
+            value = (runtime_cfg.get("main_model") or {}).get("runtime_overrides", {}).get(key)
         if value is not None:
             runtime_cfg[key] = value
+
+    if runtime_cfg.get("_default_inference_templates"):
+        missing_required_template_keys = [
+            key
+            for key in [
+                "semantic_prior_script",
+                "segmentation_script",
+                "segmentation_algorithm",
+                "diam_list",
+                "tile",
+                "overlap",
+                "tile_overlap",
+                "bsize",
+                "augment",
+                "iou_merge_thr",
+            ]
+            if runtime_cfg.get(key) in (None, "")
+        ]
+        if missing_required_template_keys:
+            raise ValueError(
+                "default inference template is missing required runtime fields after normalization: "
+                + ", ".join(missing_required_template_keys)
+            )
 
     run_name = str(first_non_empty(runtime_cfg.get("run_name"), runtime.get("run_name"), "agent_system_run"))
     persistent_root = first_non_empty(

@@ -1,0 +1,56 @@
+experiment_name: forest_agent_expert_model_finetune
+run_name: expert_model_coco_finetune
+input_type: coco_dataset
+
+base_config: configs/templates/runtime/coco_dataset_runtime_template.yaml
+output_dir: outputs/finetune/expert_model_coco
+
+segmentation_algorithm: mmdet_htc
+target_model_role: expert_model
+target_expert_family: under_segmentation
+segmentation_dataset_dirname: external_segmentation_dataset
+segmentation_dataset_force_rebuild: true
+
+public_dataset_root: data/Dataset_4
+public_dataset_split_mapping:
+  train_4: Dataset_4_train
+  validation: Validation_set
+  val: Validation_set
+  test: Testing_set
+public_dataset_train_splits: [train_4]
+public_dataset_val_splits: [validation]
+public_dataset_test_splits: []
+public_dataset_image_dirname: images
+public_dataset_annotation_dirname: annotation
+
+segmentation_train_conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+segmentation_train_conda_env: mmdetection
+segmentation_train_repo_root: models/mmdetection
+segmentation_train_out_dirname: segmentation_training
+segmentation_train_base_config: models/mmdetection/configs/htc/htc_without_semantic_r50_fpn_coco.py
+segmentation_train_init_checkpoint: models/mmdetection/checkpoints/htc_r50_fpn_coco.pth
+
+segmentation_class_names: [crown]
+segmentation_num_classes: 1
+segmentation_train_batch_size: 1
+segmentation_train_num_workers: 4
+segmentation_train_epochs: 8
+segmentation_train_lr: 0.0001
+segmentation_train_weight_decay: 0.0001
+
+expert_training_strategy:
+  train_mode: head_only
+  freeze_backbone: true
+  supervision_mode: hybrid
+  dataset_wrapper:
+    type: RepeatDataset
+    times: 2
+  curriculum_mode: hard_case_first
+  replay_ratio: 0.35
+  hard_case_ratio: 0.55
+  prior_axes: [crown_density, overlap, boundary]
+
+knowledge_injection_strategy:
+  mode: expert_guided
+  target_expert_family: under_segmentation
+  prior_axes: [crown_density, overlap, boundary]

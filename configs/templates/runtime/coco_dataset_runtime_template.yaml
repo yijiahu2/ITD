@@ -1,0 +1,32 @@
+input_type: coco_dataset
+experiment_name: forest_agent_coco_dataset
+run_name: coco_dataset_runtime_template
+
+conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
+conda_env: tcd
+work_dir: runtime_entrypoints
+
+input_image: data/Dataset_4/Validation_set/images/sample.tif
+output_dir: outputs/runtime/coco_dataset_runtime_template
+metrics_json: outputs/runtime/coco_dataset_runtime_template/evaluation_metrics.json
+details_csv: outputs/runtime/coco_dataset_runtime_template/evaluation_details.csv
+
+semantic_prior_script: runtime_entrypoints/semantic_prior_segformer.py
+semantic_prior_ckpt:
+segmentation_script: runtime_entrypoints/segmentation_legacy_cellpose_sam.py
+segmentation_algorithm: legacy_cellpose_sam
+segmentation_algorithm_cfg: {}
+
+prediction_score_mode: semantic_prior_mean_prob
+diam_list: "96,192,320"
+tile: 1024
+overlap: 0
+tile_overlap: 0.35
+bsize: 256
+augment: false
+iou_merge_thr: 0.24
+
+grouped_inference_enabled: false
+keep_debug_outputs: true
+keep_semantic_prior_artifacts: true
+cleanup_policy: minimal

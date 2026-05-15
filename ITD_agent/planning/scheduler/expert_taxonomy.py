@@ -7,7 +7,8 @@ from typing import Any
 from ITD_agent.config_adapter import load_raw_yaml
 
 
-DEFAULT_TAXONOMY_PATH = Path("/home/xth/forest_agent_project/configs/expert_taxonomy/expert_families.yaml")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_TAXONOMY_PATH = REPO_ROOT / "configs" / "taxonomy" / "expert_families.yaml"
 
 
 def _normalize_tag(value: Any) -> str:

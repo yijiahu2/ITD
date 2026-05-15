@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .adaptive_inference import _load_structured
+from .adaptive_inference import _inject_real_only_default_templates, _load_structured
 from .real_inference_adapter import derive_dataset_input, resolve_image_path_for_coco
 
 
@@ -17,7 +17,7 @@ def _path_status(path: str | Path | None) -> dict[str, Any]:
 
 
 def preflight_runtime_config(config_path: str | Path) -> dict[str, Any]:
-    cfg = _load_structured(config_path)
+    cfg = _inject_real_only_default_templates(_load_structured(config_path))
     input_cfg = derive_dataset_input(cfg.get("input") or {})
     annotation = _path_status(input_cfg.get("annotation_json"))
     image_root = _path_status(input_cfg.get("image_root"))

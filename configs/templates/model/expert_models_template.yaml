@@ -1,0 +1,102 @@
+execution_mode: real
+tile_execution: true
+
+default_templates:
+  htc:
+    expert_model:
+      name: htc
+      role: under_segmentation_correction
+      framework: mmdetection
+      config_file: outputs/model_registry/htc/generated_configs/mmdet_htc_public_itd.py
+      checkpoint_file: outputs/model_registry/htc/best_coco_segm_mAP.pth
+      device: cuda:0
+    input:
+      tile_size: 1024
+      tile_overlap: 0
+      keep_georeference: true
+    inference:
+      score_thr: 0.25
+      mask_thr_binary: 0.45
+      nms_iou_thr: 0.55
+      max_per_img: 500
+      batch_size: 1
+    postprocess:
+      min_area_px: 20
+      max_area_px: 300000
+      merge_tile_iou_thr: 0.45
+      mode: split_merged_crowns
+
+  cascade_mask_rcnn:
+    expert_model:
+      name: cascade_mask_rcnn
+      role: false_positive_cleanup
+      framework: mmdetection
+      config_file: outputs/model_registry/cascade_mask_rcnn/generated_configs/mmdet_cascade_mask_rcnn_public_itd.py
+      checkpoint_file: outputs/model_registry/cascade_mask_rcnn/best_coco_segm_mAP.pth
+      device: cuda:0
+    input:
+      tile_size: 1024
+      tile_overlap: 0
+      keep_georeference: true
+    inference:
+      score_thr: 0.5
+      mask_thr_binary: 0.5
+      nms_iou_thr: 0.45
+      max_per_img: 300
+      batch_size: 1
+    postprocess:
+      min_area_px: 50
+      max_area_px: 200000
+      min_compactness: 0.08
+      max_aspect_ratio: 4.0
+      mode: false_positive_filter
+
+  mask2former:
+    expert_model:
+      name: mask2former
+      role: over_segmentation_correction
+      framework: detectron2_mask2former
+      config_file: models/mask2former/configs/mask2former_r50_coco.py
+      checkpoint_file: models/mask2former/checkpoints/mask2former_r50_coco.pth
+      device: cuda:0
+    input:
+      tile_size: 1024
+      tile_overlap: 0
+      keep_georeference: true
+    inference:
+      instance_score_thr: 0.35
+      object_mask_thr: 0.45
+      overlap_thr: 0.8
+      max_instances: 200
+      batch_size: 1
+    postprocess:
+      min_area_px: 50
+      merge_fragment_iou_thr: 0.2
+      merge_fragment_boundary_gap_px: 8
+      merge_fragment_centroid_distance_px: 80
+      mode: fragment_merge
+
+  maskdino:
+    expert_model:
+      name: maskdino
+      role: missed_crown_recall
+      framework: maskdino_detectron2
+      config_file: models/maskdino/configs/maskdino_R50_bs16_50ep.yaml
+      checkpoint_file: models/maskdino/checkpoints/maskdino_r50.pth
+      device: cuda:0
+    input:
+      tile_size: 1024
+      tile_overlap: 0
+      keep_georeference: true
+    inference:
+      instance_score_thr: 0.2
+      object_mask_thr: 0.4
+      max_instances: 500
+      topk_per_image: 500
+      batch_size: 1
+    postprocess:
+      min_area_px: 20
+      max_area_px: 250000
+      add_new_instance_iou_thr: 0.2
+      suppress_overlap_with_main_iou_thr: 0.6
+      mode: missed_instance_recall

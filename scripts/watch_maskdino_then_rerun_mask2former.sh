@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CFG_DIR="/home/xth/forest_agent_project/configs/generated/dataset4_model_sweep_fair_20260427_02"
 OUT_ROOT="/home/xth/forest_agent_project/outputs/dataset4_model_sweep_fair_20260427_02"
+CFG_DIR="$OUT_ROOT/generated_configs"
 STATUS_DIR="$OUT_ROOT/status"
 LOG_DIR="$OUT_ROOT/logs"
 WATCH_LOG="$LOG_DIR/watch_maskdino_then_rerun_mask2former.log"

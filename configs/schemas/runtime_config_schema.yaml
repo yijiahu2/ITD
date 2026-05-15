@@ -1,0 +1,17 @@
+schema_version: 1
+allowed_input_types: [dom_image, coco_dataset]
+required_top_level_fields:
+  - input_type
+forbidden_fields:
+  - dem_tif
+  - chm_tif
+  - dsm_tif
+  - xiaoban_shp
+  - terrain
+  - canopy
+  - surface
+  - mainline_profile
+runtime_outputs:
+  generated_config_root_policy: outputs_or_run_output_dir_only
+  forbidden_generated_roots:
+    - configs/generated

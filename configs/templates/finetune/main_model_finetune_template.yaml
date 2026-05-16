@@ -31,10 +31,10 @@ public_dataset_holdout_test_seed: 42
 
 segmentation_train_conda_sh: /home/xth/anaconda3/etc/profile.d/conda.sh
 segmentation_train_conda_env: maskdino
-segmentation_train_repo_root: models/maskdino
+segmentation_train_repo_root: /home/xth/MaskDINO
 segmentation_train_out_dirname: segmentation_training
-segmentation_train_base_config: models/maskdino/configs/maskdino_R50_bs16_50ep.yaml
-segmentation_train_init_checkpoint: models/maskdino/checkpoints/maskdino_r50.pth
+segmentation_train_base_config: /home/xth/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s_dowsample1_2048.yaml
+segmentation_train_init_checkpoint: /home/xth/MaskDINO/weights/maskdino_r50.pth
 
 segmentation_class_names: [crown]
 segmentation_num_classes: 1

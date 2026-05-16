@@ -93,8 +93,10 @@ def main() -> None:
     checkpoint = str(cfg["checkpoint"])
     device = str(cfg.get("device") or "cuda")
     if device.startswith("cuda") and not torch.cuda.is_available():
-        print(f"[WARN] CUDA requested but unavailable, falling back to cpu: {device}")
-        device = "cpu"
+        raise RuntimeError(
+            f"Requested device {device}, but CUDA is not available in the current process. "
+            "Fix the shell/driver environment instead of falling back to CPU."
+        )
     image_bgr = cv2.imread(args.input_png, cv2.IMREAD_COLOR)
     if image_bgr is None:
         raise FileNotFoundError(f"Failed to read input_png: {args.input_png}")

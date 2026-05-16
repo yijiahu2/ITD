@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -783,12 +784,21 @@ def _write_instance_mask_from_crowns(
 
 
 def _write_coco_predictions(result: FinalTreeCrownResult, dst: str | Path) -> str | None:
+    source_predictions: list[dict[str, Any]] = []
     if result.coco_predictions_path and Path(result.coco_predictions_path).exists():
-        return _copy_optional_file(result.coco_predictions_path, dst)
-    if not result.instances:
+        try:
+            payload = json.loads(Path(result.coco_predictions_path).read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                payload = payload.get("annotations") or payload.get("predictions") or []
+            source_predictions = [dict(item) for item in payload or [] if isinstance(item, dict)]
+        except Exception:
+            source_predictions = []
+    elif result.instances:
+        source_predictions = [dict(item) for item in result.instances]
+    if not source_predictions:
         return None
     predictions = []
-    for instance in result.instances:
+    for instance in source_predictions:
         row = {
             "image_id": instance.get("image_id"),
             "category_id": instance.get("category_id", 1),
@@ -812,8 +822,12 @@ def _write_coco_instance_masks(
 ) -> list[str]:
     if result.instance_mask_paths:
         copied = []
-        for src in result.instance_mask_paths:
-            copied_path = _copy_optional_file(src, Path(masks_dir) / Path(src).name)
+        image_lookup = _resolve_coco_image_lookup(result)
+        image_ids = list(image_lookup.keys())
+        for idx, src in enumerate(result.instance_mask_paths, start=1):
+            image_id = image_ids[idx - 1] if idx - 1 < len(image_ids) else Path(src).stem.replace("_instance_mask", "")
+            safe_id = _safe_output_name(image_id)
+            copied_path = _copy_optional_file(src, Path(masks_dir) / f"image_{safe_id}_instance_mask.png")
             if copied_path:
                 copied.append(copied_path)
         return copied
@@ -871,7 +885,7 @@ def _write_coco_instance_masks(
                     if x1 > x0 and y1 > y0:
                         mask[y0:y1, x0:x1] = inst_idx
         safe_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in image_id)
-        out_path = out_dir / f"{safe_id}_instance_mask.png"
+        out_path = out_dir / f"image_{safe_id}_instance_mask.png"
         preview = mask.astype("float32")
         if preview.max() > 0:
             preview = preview / preview.max()
@@ -914,12 +928,14 @@ def _draw_coco_overlay(
     instances: list[dict[str, Any]],
     dst: str | Path,
     title: str | None = None,
+    color_by_error: bool = False,
+    show_labels: bool = False,
 ) -> str | None:
     try:
         os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-output-layer")
+        import numpy as np
         import matplotlib.pyplot as plt
         from matplotlib.patches import Polygon as MplPolygon
-        from matplotlib.patches import Rectangle
         from PIL import Image
     except Exception:
         return None
@@ -947,17 +963,51 @@ def _draw_coco_overlay(
     fig_h = max(min(height / 120.0, 10.0), 3.0)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=160)
     ax.imshow(canvas)
+    combined_overlay = np.zeros((height, width, 4), dtype=float)
+    label_points: list[tuple[float, float, str, tuple[float, float, float]]] = []
     for idx, instance in enumerate(instances, start=1):
         color = "#2f9e44"
-        eval_type = str(instance.get("eval_type") or instance.get("error_type") or "").lower()
-        if eval_type in {"fp", "false_positive"}:
-            color = "#e03131"
-        elif eval_type in {"fn", "false_negative"}:
-            color = "#1971c2"
-        elif eval_type in {"low_iou", "low-iou"}:
-            color = "#f08c00"
+        if color_by_error:
+            eval_type = str(instance.get("eval_type") or instance.get("error_type") or "").lower()
+            if eval_type in {"fp", "false_positive"}:
+                color = "#e03131"
+            elif eval_type in {"fn", "false_negative"}:
+                color = "#1971c2"
+            elif eval_type in {"low_iou", "low-iou"}:
+                color = "#f08c00"
         segmentation = instance.get("segmentation")
         painted = False
+        rgb = {
+            "#2f9e44": (47 / 255, 158 / 255, 68 / 255),
+            "#e03131": (224 / 255, 49 / 255, 49 / 255),
+            "#1971c2": (25 / 255, 113 / 255, 194 / 255),
+            "#f08c00": (240 / 255, 140 / 255, 0),
+        }.get(color, (47 / 255, 158 / 255, 68 / 255))
+        if isinstance(segmentation, dict):
+            try:
+                from pycocotools import mask as mask_utils
+
+                rle = dict(segmentation)
+                counts = rle.get("counts")
+                if isinstance(counts, str):
+                    rle["counts"] = counts.encode("ascii")
+                mask = mask_utils.decode(rle).astype(bool)
+                if mask.ndim == 3:
+                    mask = mask[:, :, 0].astype(bool)
+                if mask.shape[0] != height or mask.shape[1] != width:
+                    mask = mask[:height, :width]
+                boundary = np.zeros_like(mask, dtype=bool)
+                boundary[1:, :] |= mask[1:, :] != mask[:-1, :]
+                boundary[:-1, :] |= mask[:-1, :] != mask[1:, :]
+                boundary[:, 1:] |= mask[:, 1:] != mask[:, :-1]
+                boundary[:, :-1] |= mask[:, :-1] != mask[:, 1:]
+                combined_overlay[mask, :3] = rgb
+                combined_overlay[mask, 3] = np.maximum(combined_overlay[mask, 3], 0.22)
+                combined_overlay[boundary, :3] = rgb
+                combined_overlay[boundary, 3] = 0.95
+                painted = True
+            except Exception:
+                painted = False
         if isinstance(segmentation, list):
             for raw_poly in segmentation:
                 if not isinstance(raw_poly, list) or len(raw_poly) < 6:
@@ -965,15 +1015,21 @@ def _draw_coco_overlay(
                 coords = [(float(raw_poly[i]), float(raw_poly[i + 1])) for i in range(0, len(raw_poly) - 1, 2)]
                 ax.add_patch(MplPolygon(coords, closed=True, fill=True, alpha=0.22, edgecolor=color, facecolor=color, linewidth=1.0))
                 painted = True
-        if not painted:
-            bbox = list(instance.get("bbox") or instance.get("bbox_xywh") or [])
-            if len(bbox) >= 4:
-                x, y, w, h = [float(value) for value in bbox[:4]]
-                ax.add_patch(Rectangle((x, y), w, h, fill=False, edgecolor=color, linewidth=1.2))
-        if idx <= 30:
+        if show_labels and idx <= 30:
             bbox = list(instance.get("bbox") or instance.get("bbox_xywh") or [])
             if len(bbox) >= 2:
-                ax.text(float(bbox[0]), float(bbox[1]), str(idx), color="white", fontsize=6, bbox={"facecolor": color, "alpha": 0.7, "pad": 1})
+                label_points.append((float(bbox[0]), float(bbox[1]), str(idx), rgb))
+    if combined_overlay[:, :, 3].max() > 0:
+        ax.imshow(combined_overlay)
+    for x, y, label, rgb in label_points:
+        ax.text(
+            x,
+            y,
+            label,
+            color="white",
+            fontsize=6,
+            bbox={"facecolor": rgb, "alpha": 0.7, "pad": 1},
+        )
     if title:
         ax.set_title(title, fontsize=8)
     ax.set_axis_off()
@@ -983,31 +1039,86 @@ def _draw_coco_overlay(
     return str(dst_path)
 
 
+def _overlay_worker_count(task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    raw = os.environ.get("ITD_OUTPUT_LAYER_OVERLAY_WORKERS")
+    if raw:
+        try:
+            configured = int(raw)
+            if configured > 0:
+                return min(configured, task_count)
+        except ValueError:
+            pass
+    return min(os.cpu_count() or 1, task_count, 4)
+
+
+def _render_coco_overlay_worker(task: dict[str, Any]) -> dict[str, Any]:
+    rendered = _draw_coco_overlay(
+        image_path=task.get("image_path"),
+        instances=list(task.get("instances") or []),
+        dst=task["dst"],
+        title=task.get("title"),
+        color_by_error=bool(task.get("color_by_error", False)),
+        show_labels=bool(task.get("show_labels", False)),
+    )
+    return {
+        "index": int(task.get("index", 0)),
+        "key": task.get("key"),
+        "path": rendered,
+    }
+
+
+def _render_coco_overlays(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not tasks:
+        return []
+    workers = _overlay_worker_count(len(tasks))
+    if workers <= 1:
+        return [_render_coco_overlay_worker(task) for task in tasks]
+    try:
+        results: list[dict[str, Any]] = []
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_render_coco_overlay_worker, task) for task in tasks]
+            for future in as_completed(futures):
+                results.append(future.result())
+        return sorted(results, key=lambda item: int(item.get("index", 0)))
+    except Exception:
+        return [_render_coco_overlay_worker(task) for task in tasks]
+
+
 def _write_coco_sample_overlays(result: FinalTreeCrownResult, layout: dict[str, Path]) -> list[str]:
     max_overlays = int(result.visualization_config.get("max_sample_overlays", 20) or 0)
-    if max_overlays <= 0 or not result.instances:
+    if max_overlays <= 0:
         return []
     image_lookup = _resolve_coco_image_lookup(result)
     grouped: dict[str, list[dict[str, Any]]] = {}
     for instance in result.instances:
         image_id = str(instance["image_id"]) if instance.get("image_id") is not None else "image"
         grouped.setdefault(image_id, []).append(instance)
-    written: list[str] = []
+    tasks: list[dict[str, Any]] = []
     overlay_dir = layout["visualization"] / "sample_overlays"
-    for image_idx, (image_id, instances) in enumerate(sorted(grouped.items()), start=1):
+    if image_lookup:
+        image_ids = list(image_lookup.keys())
+    else:
+        image_ids = sorted(grouped.keys())
+    for image_idx, image_id in enumerate(image_ids, start=1):
         if image_idx > max_overlays:
             break
+        instances = grouped.get(str(image_id), [])
         image_info = image_lookup.get(str(image_id), {})
-        out_path = overlay_dir / f"{_safe_output_name(image_id)}_overlay.png"
-        rendered = _draw_coco_overlay(
-            image_path=image_info.get("path"),
-            instances=instances,
-            dst=out_path,
-            title=f"image_id={image_id}",
+        out_path = overlay_dir / f"sample_{image_idx:06d}_overlay.png"
+        tasks.append(
+            {
+                "index": image_idx,
+                "image_path": image_info.get("path"),
+                "instances": instances,
+                "dst": str(out_path),
+                "title": f"image_id={image_id}",
+                "color_by_error": False,
+                "show_labels": False,
+            }
         )
-        if rendered:
-            written.append(rendered)
-    return written
+    return [str(item["path"]) for item in _render_coco_overlays(tasks) if item.get("path")]
 
 
 def _write_placeholder_png(dst: str | Path, title: str) -> str | None:
@@ -1036,6 +1147,15 @@ def _write_coco_selected_error_examples(result: FinalTreeCrownResult, layout: di
     requested = {str(item).strip().lower() for item in requested_types if str(item).strip()}
     image_lookup = _resolve_coco_image_lookup(result)
     examples: dict[str, list[dict[str, Any]]] = {"fp": [], "fn": [], "low_iou": []}
+    metrics = result.gt_metrics or {}
+    metric_examples = {
+        "fp": metrics.get("false_positive_examples") or [],
+        "fn": metrics.get("false_negative_examples") or [],
+        "low_iou": metrics.get("low_iou_examples") or [],
+    }
+    for key, values in metric_examples.items():
+        if isinstance(values, list):
+            examples[key].extend(dict(item) for item in values if isinstance(item, dict))
     for instance in result.instances:
         eval_type = str(instance.get("eval_type") or instance.get("error_type") or "").lower()
         iou = instance.get("iou_gt", instance.get("best_iou", instance.get("iou")))
@@ -1058,7 +1178,9 @@ def _write_coco_selected_error_examples(result: FinalTreeCrownResult, layout: di
         "fn": "No false-negative examples selected",
         "low_iou": "No low-IoU examples selected",
     }
-    for error_type, filename in file_by_type.items():
+    tasks: list[dict[str, Any]] = []
+    task_keys: set[str] = set()
+    for index, (error_type, filename) in enumerate(file_by_type.items(), start=1):
         if error_type not in requested:
             continue
         selected = sorted(examples[error_type], key=lambda item: float(item.get("score", 0.0)), reverse=True)[:max_examples]
@@ -1066,14 +1188,25 @@ def _write_coco_selected_error_examples(result: FinalTreeCrownResult, layout: di
         if selected:
             image_id = str(selected[0]["image_id"]) if selected[0].get("image_id") is not None else "image"
             image_info = image_lookup.get(image_id, {})
-            outputs[error_type] = _draw_coco_overlay(
-                image_path=image_info.get("path"),
-                instances=selected,
-                dst=out_path,
-                title=f"{error_type} top-{len(selected)}",
+            task_keys.add(error_type)
+            tasks.append(
+                {
+                    "index": index,
+                    "key": error_type,
+                    "image_path": image_info.get("path"),
+                    "instances": selected,
+                    "dst": str(out_path),
+                    "title": f"{error_type} top-{len(selected)}",
+                    "color_by_error": True,
+                    "show_labels": True,
+                }
             )
         else:
             outputs[error_type] = _write_placeholder_png(out_path, label_by_type[error_type])
+    for item in _render_coco_overlays(tasks):
+        key = str(item.get("key") or "")
+        if key in task_keys:
+            outputs[key] = item.get("path")
     return outputs
 
 
@@ -1408,14 +1541,15 @@ def publish_final_tree_crown_outputs(*, result: FinalTreeCrownResult, publish_ro
 
     if scenario == SCENARIO_COCO_GT:
         coco_predictions = _write_coco_predictions(result, layout["results"] / "coco_predictions.json")
-        copied_instance_png = _copy_optional_file(result.instance_mask_png, layout["masks"] / "instance_mask.png")
         instance_mask_paths = _write_coco_instance_masks(
             result=result,
             masks_dir=layout["masks"] / "instance_masks",
             max_masks=int(result.visualization_config.get("max_instance_masks", 0) or 0) or None,
         )
-        if copied_instance_png:
-            instance_mask_paths = [copied_instance_png, *instance_mask_paths]
+        if result.instance_mask_png:
+            copied_instance_png = _copy_optional_file(result.instance_mask_png, layout["masks"] / "instance_masks" / "image_primary_instance_mask.png")
+            if copied_instance_png:
+                instance_mask_paths = [copied_instance_png, *instance_mask_paths]
 
         sample_overlay_paths = _write_coco_sample_overlays(result, layout)
         selected_error_examples = _write_coco_selected_error_examples(result, layout)

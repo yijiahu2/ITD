@@ -37,6 +37,7 @@ def run_workflow(command: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
         "evolve-infer": evolve_infer,
         "evolve": evolve,
         "run": run,
+        "coco-png-infer": coco_png_infer,
         "adaptive-inference": adaptive_inference,
         "review": review,
         "train": train,
@@ -60,6 +61,51 @@ def run(config_path: str | Path) -> dict[str, Any]:
     ctx = build_config_context(config_path)
     result = run_full_workflow(config_path)
     return {"command": "run", "context": ctx.to_dict(), "result": result}
+
+
+def coco_png_infer(
+    *,
+    template: str | Path,
+    dataset_root: str | Path,
+    image_root: str | Path,
+    annotation: str | Path,
+    output_dir: str | Path,
+    run_name: str,
+    split: str = "validation",
+    max_images: int | None = None,
+    image_ids: list[str] | None = None,
+    image_names: list[str] | None = None,
+    max_expert_rounds: int = 1,
+    device: str | None = None,
+) -> dict[str, Any]:
+    from ITD_agent.orchestration.coco_png_pipeline import run_coco_png_pipeline
+
+    result = run_coco_png_pipeline(
+        template=template,
+        dataset_root=dataset_root,
+        image_root=image_root,
+        annotation=annotation,
+        output_dir=output_dir,
+        run_name=run_name,
+        split=split,
+        max_images=max_images,
+        image_ids=image_ids,
+        image_names=image_names,
+        max_expert_rounds=max_expert_rounds,
+        device=device,
+    )
+    return {
+        "command": "coco-png-infer",
+        "context": {
+            "template": str(template),
+            "dataset_root": str(dataset_root),
+            "image_root": str(image_root),
+            "annotation": str(annotation),
+            "output_dir": str(output_dir),
+            "run_name": run_name,
+        },
+        "result": result,
+    }
 
 
 def adaptive_inference(config_path: str | Path) -> dict[str, Any]:

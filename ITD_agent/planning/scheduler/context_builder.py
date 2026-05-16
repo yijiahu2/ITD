@@ -396,7 +396,7 @@ def build_evolve_infer_plan_context(
         "main_model_plan": {
             "model_id": main_model_cfg.get("model_id", "legacy_cellpose_sam"),
             "execution_mode": main_model_cfg.get("execution_mode", "prediction_json"),
-            "planning_policy": "dom_only_coco_mainline_a",
+            "planning_policy": "dom_image_or_coco_dataset_real_inference",
             "input_policy": "DOM image and configured prediction/runtime inputs only; no GT instances in prompt or model input.",
             "repair_interface": {
                 "supported": False,

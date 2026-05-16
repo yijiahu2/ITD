@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from input_layer.adapters import build_input_manifest
-from input_layer.mainline_profiles import A_DOM_ONLY, normalize_mainline_profile
+from input_layer.mainline_profiles import DOM_IMAGE_PROFILE, normalize_mainline_profile
 from input_layer.registry import register_input_bundle
 from output_layer.contracts import FinalTreeCrownResult
 from output_layer.publisher import publish_final_tree_crown_outputs
@@ -469,7 +469,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> str:
 
 def _build_manifest_cfg(cfg: dict[str, Any], input_cfg: dict[str, Any]) -> dict[str, Any]:
     return {
-        "mainline_profile": normalize_mainline_profile(cfg.get("mainline_profile") or A_DOM_ONLY),
+        "mainline_profile": normalize_mainline_profile(cfg.get("mainline_profile") or DOM_IMAGE_PROFILE),
         "inputs": {
             "remote_sensing": {"images": []},
             "terrain": {"dem": []},
@@ -481,7 +481,7 @@ def _build_manifest_cfg(cfg: dict[str, Any], input_cfg: dict[str, Any]) -> dict[
             "public_datasets": {
                 "datasets": [
                     {
-                        "id": str(input_cfg.get("dataset_id") or "coco_mainline_a"),
+                        "id": str(input_cfg.get("dataset_id") or "coco_dataset"),
                         "format": "coco",
                         "annotation_path": input_cfg.get("annotation_json"),
                         "image_root": input_cfg.get("image_root"),
@@ -710,7 +710,7 @@ def _write_foreground_outputs(
     metrics_path = _write_json(final_root / "final_metrics.json", metrics_payload)
     report_payload = {
         "run_id": run_id,
-        "mainline_profile": str(cfg.get("mainline_profile") or "A_DOM_ONLY"),
+        "mainline_profile": str(cfg.get("mainline_profile") or DOM_IMAGE_PROFILE),
         "status": "frozen",
         "summary": metrics_payload,
         "trajectory_paths": trajectory_paths,
@@ -823,7 +823,7 @@ def _run_one_sample(
     pred_instances = normalize_coco_instances(pred_instances, image_id=image.get("id"), source="main_prediction_input")
     trajectory = start_trajectory(run_id=run_id, image=image, annotation_json=cfg["input"]["annotation_json"])
     trajectory["input_snapshot"]["gt_instance_count"] = len(gt_instances)
-    trajectory["mainline_profile"] = str(cfg.get("mainline_profile") or "A_DOM_ONLY")
+    trajectory["mainline_profile"] = str(cfg.get("mainline_profile") or DOM_IMAGE_PROFILE)
     trajectory["experience_context"] = cfg.get("_experience_context") or {}
     trajectory["data_processing_stage"] = {
         **(cfg.get("_data_processing_context") or {}),
@@ -1028,7 +1028,7 @@ def _run_one_sample(
 
 def run_adaptive_inference_stage(config_path: str) -> dict[str, Any]:
     cfg = _inject_real_only_default_templates(_load_structured(config_path))
-    cfg["mainline_profile"] = normalize_mainline_profile(cfg.get("mainline_profile") or A_DOM_ONLY)
+    cfg["mainline_profile"] = normalize_mainline_profile(cfg.get("mainline_profile") or DOM_IMAGE_PROFILE)
     _require_real_only_modes(cfg)
     cfg["input"] = derive_dataset_input(cfg.get("input") or {})
     _validate_real_runtime_dependencies(cfg)
@@ -1082,7 +1082,7 @@ def run_adaptive_inference_stage(config_path: str) -> dict[str, Any]:
     summary = {
         "run_id": run_id,
         "mode": str(cfg.get("mode") or "adaptive_inference"),
-        "mainline_profile": str(cfg.get("mainline_profile") or "A_DOM_ONLY"),
+        "mainline_profile": str(cfg.get("mainline_profile") or DOM_IMAGE_PROFILE),
         "output_dir": str(output_dir),
         "foreground_goal": "single_tree_crown_detection_and_extraction",
         "final_outputs": final_outputs,

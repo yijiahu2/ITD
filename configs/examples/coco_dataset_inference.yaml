@@ -74,8 +74,8 @@ expert_models:
         name: htc
         role: under_segmentation_correction
         framework: mmdetection
-        config_file: outputs/model_registry/htc/generated_configs/mmdet_htc_public_itd.py
-        checkpoint_file: outputs/model_registry/htc/best_coco_segm_mAP.pth
+        config_file: /home/xth/mmdetection331/configs/htc/htc-without-semantic_r50_fpn_1x_coco.py
+        checkpoint_file: /home/xth/mmdetection331/checkpoints/htc_r50_fpn_1x_coco_20200317-7332cf16.pth
         device: cuda:0
       input:
         tile_size: 1024
@@ -97,8 +97,8 @@ expert_models:
         name: cascade_mask_rcnn
         role: false_positive_cleanup
         framework: mmdetection
-        config_file: outputs/model_registry/cascade_mask_rcnn/generated_configs/mmdet_cascade_mask_rcnn_public_itd.py
-        checkpoint_file: outputs/model_registry/cascade_mask_rcnn/best_coco_segm_mAP.pth
+        config_file: /home/xth/mmdetection331/configs/cascade_rcnn/cascade-mask-rcnn_r50_fpn_1x_coco.py
+        checkpoint_file: /home/xth/mmdetection331/checkpoints/cascade_mask_rcnn_r50_fpn_1x_coco_20200203-9d4dcb24.pth
         device: cuda:0
       input:
         tile_size: 1024
@@ -121,8 +121,8 @@ expert_models:
         name: mask2former
         role: over_segmentation_correction
         framework: detectron2_mask2former
-        config_file: models/mask2former/configs/mask2former_r50_coco.py
-        checkpoint_file: models/mask2former/checkpoints/mask2former_r50_coco.pth
+        config_file: /home/xth/mmdetection331/configs/mask2former/mask2former_r50_8xb2-lsj-50e_coco.py
+        checkpoint_file: /home/xth/mmdetection331/checkpoints/mask2former_r50_8xb2-lsj-50e_coco_20220506_191028-41b088b6.pth
         device: cuda:0
       input:
         tile_size: 1024
@@ -145,8 +145,8 @@ expert_models:
         name: maskdino
         role: missed_crown_recall
         framework: maskdino_detectron2
-        config_file: models/maskdino/configs/maskdino_R50_bs16_50ep.yaml
-        checkpoint_file: models/maskdino/checkpoints/maskdino_r50.pth
+        config_file: /home/xth/MaskDINO/configs/coco/instance-segmentation/maskdino_R50_bs16_50ep_3s_dowsample1_2048.yaml
+        checkpoint_file: /home/xth/MaskDINO/weights/maskdino_r50.pth
         device: cuda:0
       input:
         tile_size: 1024

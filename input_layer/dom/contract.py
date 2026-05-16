@@ -179,7 +179,7 @@ def _build_dom_contract(
         source_path=source.path,
         working_dom_path=str(working_dom_path),
         input_type=_input_type(source.path),
-        mainline_profile=str(runtime_cfg.get("mainline_profile") or "A_DOM_ONLY"),
+        mainline_profile=str(runtime_cfg.get("mainline_profile") or "dom_image"),
         width=int(width),
         height=int(height),
         pixel_count=int(width * height),

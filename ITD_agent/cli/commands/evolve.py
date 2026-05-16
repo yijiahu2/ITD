@@ -3,10 +3,6 @@ from __future__ import annotations
 from argparse import ArgumentParser, Namespace
 from typing import Any
 
-from ITD_agent.orchestration.evolution_workflow import run_controlled_evolution
-from ITD_agent.orchestration.workflow import evolve_infer
-
-
 def register(subparsers: Any) -> None:
     parser: ArgumentParser = subparsers.add_parser("evolve", help="Run controlled self-evolution workflow.")
     parser.add_argument("--config", required=True)
@@ -17,8 +13,12 @@ def register(subparsers: Any) -> None:
 
 
 def handle(args: Namespace) -> dict[str, Any]:
+    from ITD_agent.orchestration.evolution_workflow import run_controlled_evolution
+
     return run_controlled_evolution(args.config)
 
 
 def handle_infer(args: Namespace) -> dict[str, Any]:
+    from ITD_agent.orchestration.workflow import evolve_infer
+
     return evolve_infer(args.config)

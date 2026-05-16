@@ -33,6 +33,15 @@ FORBIDDEN_INPUT_FIELDS = {
     "surface",
     "mainline_profile",
 }
+_PRODUCT_BOUNDARY_MANIFEST_KEYS = {
+    "terrain_dem",
+    "canopy_height",
+    "surface_models",
+    "dem_paths",
+    "chm_paths",
+    "dsm_paths",
+}
+_PRODUCT_BOUNDARY_MODALITY_KEYS = {"dem", "chm", "dsm"}
 
 
 def _config_dir(config_path: str | None) -> Path | None:
@@ -97,6 +106,27 @@ def _validate_supported_input_contract(cfg: dict[str, Any]) -> str:
     if hits:
         raise ValueError("Unsupported input fields for current product boundary: " + ", ".join(sorted(hits)))
     return input_type
+
+
+def _manifest_to_product_boundary_dict(manifest: InputManifest) -> dict[str, Any]:
+    payload = manifest.to_dict()
+    for key in _PRODUCT_BOUNDARY_MANIFEST_KEYS:
+        payload.pop(key, None)
+    metadata = dict(payload.get("metadata") or {})
+    modalities = dict(metadata.get("input_modalities") or {})
+    for key in _PRODUCT_BOUNDARY_MODALITY_KEYS:
+        modalities.pop(key, None)
+    if modalities:
+        metadata["input_modalities"] = modalities
+    payload["metadata"] = metadata
+    return payload
+
+
+def _modalities_to_product_boundary_dict(manifest: InputManifest) -> dict[str, bool]:
+    modalities = dict(manifest.input_modalities)
+    for key in _PRODUCT_BOUNDARY_MODALITY_KEYS:
+        modalities.pop(key, None)
+    return modalities
 
 
 def _normalize_bool(value: Any, default: bool = False) -> bool:
@@ -323,7 +353,7 @@ def normalize_agent_runtime_config(
 
     if "inputs" not in runtime_cfg:
         _enforce_minimal_retention(runtime_cfg)
-        runtime_cfg["_input_manifest"] = manifest.to_dict()
+        runtime_cfg["_input_manifest"] = _manifest_to_product_boundary_dict(manifest)
         runtime_cfg["_input_validation"] = manifest.validation.to_dict() if manifest.validation else None
         runtime_cfg["_prepared_input_index"] = manifest.preparation.to_dict() if manifest.preparation else None
         return runtime_cfg, manifest
@@ -573,11 +603,11 @@ def normalize_agent_runtime_config(
     if runtime_cache_worker.get("enabled") is not None and "use_runtime_cache_worker" not in runtime_cfg:
         runtime_cfg["use_runtime_cache_worker"] = bool(runtime_cache_worker.get("enabled"))
 
-    runtime_cfg["_input_manifest"] = manifest.to_dict()
+    runtime_cfg["_input_manifest"] = _manifest_to_product_boundary_dict(manifest)
     runtime_cfg["_input_profile"] = {
         "mainline_profile": mainline_profile,
         "capabilities": mainline_capabilities,
-        "modalities": manifest.input_modalities,
+        "modalities": _modalities_to_product_boundary_dict(manifest),
         "profile_gate": manifest.metadata.get("profile_gate") or {},
     }
     runtime_cfg["_input_validation"] = manifest.validation.to_dict() if manifest.validation else None

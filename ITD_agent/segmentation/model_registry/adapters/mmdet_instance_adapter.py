@@ -213,8 +213,10 @@ def main() -> None:
     checkpoint = str(cfg["checkpoint"])
     device = str(cfg.get("device") or "cuda:0")
     if device.startswith("cuda") and not torch.cuda.is_available():
-        print(f"[WARN] CUDA requested but unavailable, falling back to cpu: {device}")
-        device = "cpu"
+        raise RuntimeError(
+            f"Requested device {device}, but CUDA is not available in the current process. "
+            "Fix the shell/driver environment instead of falling back to CPU."
+        )
     score_thr = float(cfg.get("score_thr", 0.2))
     tile_size = int(cfg.get("tile_size", 1536))
     tile_overlap = int(cfg.get("tile_overlap", 256))

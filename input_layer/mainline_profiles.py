@@ -4,13 +4,13 @@ from copy import deepcopy
 from typing import Any
 
 
-A_DOM_ONLY = "A_DOM_ONLY"
-B_DOM_DEM_CHM_KNOWLEDGE = "B_DOM_DEM_CHM_KNOWLEDGE"
-DEFAULT_MAINLINE_PROFILE = A_DOM_ONLY
+DOM_IMAGE_PROFILE = "dom_image"
+COCO_DATASET_PROFILE = "coco_dataset"
+DEFAULT_MAINLINE_PROFILE = DOM_IMAGE_PROFILE
 
 
 _PROFILE_CAPABILITIES: dict[str, dict[str, Any]] = {
-    A_DOM_ONLY: {
+    DOM_IMAGE_PROFILE: {
         "online_inputs": ["DOM"],
         "allow_dem": False,
         "allow_chm": False,
@@ -24,19 +24,19 @@ _PROFILE_CAPABILITIES: dict[str, dict[str, Any]] = {
         "allow_finetune_pool_context": True,
         "output_height_structure": False,
     },
-    B_DOM_DEM_CHM_KNOWLEDGE: {
-        "online_inputs": ["DOM", "DEM", "CHM"],
-        "allow_dem": True,
-        "allow_chm": True,
-        "allow_dsm": True,
+    COCO_DATASET_PROFILE: {
+        "online_inputs": [],
+        "allow_dem": False,
+        "allow_chm": False,
+        "allow_dsm": False,
         "allow_external_knowledge": False,
-        "allow_inventory": True,
+        "allow_inventory": False,
         "allow_domain_knowledge": False,
         "allow_public_datasets": True,
         "allow_coco_dataset": True,
         "allow_memory_context": True,
         "allow_finetune_pool_context": True,
-        "output_height_structure": True,
+        "output_height_structure": False,
     },
 }
 
@@ -46,15 +46,12 @@ def normalize_mainline_profile(value: Any) -> str:
     if not text:
         return DEFAULT_MAINLINE_PROFILE
     aliases = {
-        "A": A_DOM_ONLY,
-        "DOM_ONLY": A_DOM_ONLY,
-        "MAINLINE_A": A_DOM_ONLY,
-        "MAINLINE_A_DOM_ONLY": A_DOM_ONLY,
-        "B": B_DOM_DEM_CHM_KNOWLEDGE,
-        "DOM_DEM_CHM": B_DOM_DEM_CHM_KNOWLEDGE,
-        "DOM_DEM_CHM_KNOWLEDGE": B_DOM_DEM_CHM_KNOWLEDGE,
-        "MAINLINE_B": B_DOM_DEM_CHM_KNOWLEDGE,
-        "MAINLINE_B_DOM_DEM_CHM_KNOWLEDGE": B_DOM_DEM_CHM_KNOWLEDGE,
+        "DOM": DOM_IMAGE_PROFILE,
+        "DOM_IMAGE": DOM_IMAGE_PROFILE,
+        "DOM_ONLY": DOM_IMAGE_PROFILE,
+        "COCO": COCO_DATASET_PROFILE,
+        "COCO_DATASET": COCO_DATASET_PROFILE,
+        "PUBLIC_COCO": COCO_DATASET_PROFILE,
     }
     upper = text.upper().replace("-", "_").replace(" ", "_")
     return aliases.get(upper, upper if upper in _PROFILE_CAPABILITIES else DEFAULT_MAINLINE_PROFILE)
@@ -114,7 +111,9 @@ def resolve_mainline_profile(cfg: dict[str, Any] | None) -> str:
             ),
         ]
     )
-    return B_DOM_DEM_CHM_KNOWLEDGE if has_b_inputs else DEFAULT_MAINLINE_PROFILE
+    if (cfg.get("input_type") == "coco_dataset") or bool((inputs.get("public_datasets") or {}).get("datasets")):
+        return COCO_DATASET_PROFILE
+    return COCO_DATASET_PROFILE if has_b_inputs else DEFAULT_MAINLINE_PROFILE
 
 
 def profile_allows_external_knowledge(runtime_cfg: dict[str, Any] | None) -> bool:

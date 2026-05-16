@@ -12,7 +12,7 @@ def start_trajectory(*, run_id: str, image: dict[str, Any], annotation_json: str
         "image_id": image_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "mode": "adaptive_inference",
-        "mainline_profile": "A_DOM_ONLY",
+        "mainline_profile": "dom_image",
         "input_snapshot": {
             "image_path": image.get("file_name"),
             "annotation_json": annotation_json,

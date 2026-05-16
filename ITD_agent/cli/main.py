@@ -4,13 +4,14 @@ import argparse
 import json
 from typing import Any
 
-from ITD_agent.cli.commands import evolve, export, review, run, state, train
+from ITD_agent.cli.commands import coco_png, evolve, export, review, run, state, train
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="itd-agent", description="ITD_agent command surface.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     run.register(subparsers)
+    coco_png.register(subparsers)
     evolve.register(subparsers)
     review.register(subparsers)
     train.register(subparsers)
